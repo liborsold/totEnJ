@@ -52,4 +52,11 @@ def explain_results(M_sub_inv, M_partially_diagonalized, Ns_array):
         M_sub_inv (_type_): _description_
         M_partially_diagonalized (_type_): _description_
     """
-    print("ahoj")
+    terms = ['E0'] + [f'd_{n:d}' for n in range(1, len(Ns_array))]
+    calculation_strings = [f"E({Ns:d})" for Ns in Ns_array]
+    print(f"Having calculated the DFT total energies for supercells (" + ', '.join([f'{Ns:d}' for Ns in Ns_array]) +
+                f"), corresponding to angles (" +  ', '.join([f'{360/Ns:.1f}' for Ns in Ns_array]) + f") degrees, \n\
+                we obtain the ground-state energy E0 and the DMI coefficients d_n up to order n_max = {M_partially_diagonalized.shape[1]-1}\n\
+                  with the following formulas:\n" + \
+                    f"E0 = " + ' + '.join([f'{M_sub_inv[0, n]:.3f} {calculation_strings[n]}' for n in range(len(Ns_array)) if np.round(M_sub_inv[0, n], 8) != 0]) + '\n' + \
+                    '\n'.join([' + '.join([f'{M_partially_diagonalized[n, m]:.3f} d_{m:d}' for m in range(1, M_partially_diagonalized.shape[1]) if M_partially_diagonalized[n, m] != 0]) + ' = ' + ' + '.join([f'{M_sub_inv[n, m]:.3f} {calculation_strings[m]}' for m in range(len(Ns_array)) if M_sub_inv[n, m] != 0]) for n in range(1, len(Ns_array))]))
