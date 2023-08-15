@@ -45,14 +45,13 @@ def diagonalize_coefficient_matrix(M):
     return M_partially_diagonalized, M_sub_inv
 
 
-def explain_results(M_sub_inv, M_partially_diagonalized, Ns_array):
+def explain_results_verbose(M_sub_inv, M_partially_diagonalized, Ns_array):
     """_summary_
 
     Args:
         M_sub_inv (_type_): _description_
         M_partially_diagonalized (_type_): _description_
     """
-    terms = ['E0'] + [f'd_{n:d}' for n in range(1, len(Ns_array))]
     calculation_strings = [f"E({Ns:d})" for Ns in Ns_array]
     print(f"Having calculated the DFT total energies for supercells (" + ', '.join([f'{Ns:d}' for Ns in Ns_array]) +
                 f"), corresponding to angles (" +  ', '.join([f'{360/Ns:.1f}' for Ns in Ns_array]) + f") degrees, \n\
