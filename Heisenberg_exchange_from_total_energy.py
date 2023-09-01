@@ -8,7 +8,7 @@ import sympy as sp
 
 def main():
     # supercell = (2, 2, 1)
-    supercells = [(4,1,1),]
+    supercells = [(2,1,1),]
 
 
     M_all = []
@@ -18,7 +18,7 @@ def main():
         M, states = coeff_matrix_Jxy_Jz_K(lattice='hexagonal_2D', supercell=supercell, order_NN=5)
         print('Original Equations:')
         print(M)
-        print('\n')
+        print('\n')        
 
         M, unique_rows = unique_rows_in_matrix(M)
         equivalent_rows = equivalent_rows_in_matrix(M)
@@ -28,6 +28,11 @@ def main():
 
         # get only unique states
         states = states[unique_rows]
+
+        # get the pseudo-inverse
+        # If 'RD', Rank-Decomposition will be used., If 'ED', Diagonalization will be used.
+        sp.pprint(sp.Matrix(M).pinv(method='RD'))
+
 
         M_all.append(M)
         states_all.append(states)
