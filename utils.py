@@ -193,16 +193,34 @@ def unique_rows_in_matrix(M):
     M = np.array(M)
     n_rows = M.shape[0]
     unique_rows = np.full((n_rows, ), fill_value=True)
-    # if a row is 
-    for i in range(n_rows):
-        for j in range(i):
-            if np.all(M[j, :] == M[i, :]):
-                unique_rows[i] = False
 
     # drop all rows that are not unique
     M_unique = M[unique_rows, :]
 
     return M_unique, unique_rows
+
+
+def equivalent_rows_in_matrix(M):
+    """Return list of lists of indices of equivalent rows in matrix M.
+
+    Args:
+        M (_type_): numerical matrix
+
+    Returns:
+        equivalent rows (list of lists): 
+    """
+    M = np.array(M)
+    n_rows = M.shape[0]
+    rows_left = list(range(n_rows))
+    equivalent_rows = []
+    while rows_left:
+        row = rows_left.pop(0)
+        equivalent_rows.append([row])
+        for row_left in rows_left:
+            if np.all(M[row, :] == M[row_left, :]):
+                equivalent_rows[-1].append(row_left)
+                rows_left.remove(row_left)
+    return equivalent_rows
 
 
 def test_unique_rows_in_matrix():
@@ -411,65 +429,3 @@ def test_permute_rows():
 # test_unique_rows_in_matrix()
 # test_largest_submatrix_with_nonzero_last_row()
 # test_permute_rows()
-
-
-# supercell = (2, 2, 1)
-supercells = [(3,2,1)]
-
-
-M_all = []
-states_all = []
-for supercell in supercells:
-    M, states = coeff_matrix_Jxy_Jz_K(lattice='hexagonal_2D', supercell=supercell, order_NN=5)
-    print('Original Equations:')
-    print(M)
-    print('\n')
-
-    M, unique_rows = unique_rows_in_matrix(M)
-    # get only unique states
-    states = states[unique_rows]
-
-    M_all.append(M)
-    states_all.append(states)
-
-# concatenate all the matrices and all the states
-M = concatenate_all_matrices(M_all)
-states = [list(state) for state_group in states_all for state in state_group]
-
-# get rid of linearly dependent equations
-
-# cast M to row echelon form and return a matrix of such transformation T, such that M_rref = T * M
-# T tells you how to mix the rows (i.e., the DFT energies) to get the linearly independent solutions
-M_rref, T, ind = get_RREF_with_its_transformation_matrix(M)
-
-# drop the last row of M_rref that would give all zeros in a square matrix
-M_rref = largest_submatrix_with_nonzero_last_row(M_rref)
-
-# diagonalize the square submatrix of M_rref
-M_partially_diagonalized, M_sub_inv = diagonalize_coefficient_matrix(M_rref)
-
-# total T matrix from both Gaussian elimination and diagonalization
-n_final_expressions = M_sub_inv.shape[0]
-T_final = M_sub_inv @ T[:n_final_expressions, :]
-
-T_final, states = clean_allzero_columns(T_final, states)
-
-
-# ======= RESULTS =======
-print('Final equations:')
-print('')
-
-print('the calculated terms')
-sp.pprint(M_partially_diagonalized)
-print('\n')
-
-print('summing rules')
-
-
-sp.pprint(T_final)
-print(T_final)
-print('\n')
-
-print('states whose energies are to be summed by rules above to get the calculated terms')
-print(states)
-
