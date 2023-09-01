@@ -386,6 +386,7 @@ def clean_allzero_columns(T_final, states):
 
     return T_final, states
 
+
 # def neighbor_types_list()
 
 
