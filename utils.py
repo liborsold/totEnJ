@@ -194,6 +194,11 @@ def unique_rows_in_matrix(M):
     n_rows = M.shape[0]
     unique_rows = np.full((n_rows, ), fill_value=True)
 
+    for i in range(n_rows):
+        for j in range(i+1, n_rows):
+            if np.all(M[i, :] == M[j, :]):
+                unique_rows[j] = False
+
     # drop all rows that are not unique
     M_unique = M[unique_rows, :]
 
