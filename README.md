@@ -1,5 +1,9 @@
 # Heisenberg exchange and DMI from DFT-calculated supercell total energies
 
+```
+pip install totEnJ
+```
+
 ## Heisenberg exchange
 
 Calculate **Heisenberg exchange** (in-plane and out-of-plane, uniaxial anisotropy) from total energy of magnetic supercells.
