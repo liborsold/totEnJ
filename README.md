@@ -1,5 +1,8 @@
 # Heisenberg exchange and DMI from DFT-calculated supercell total energies
-Calculate Heisenberg exchange (in-plane and out-of-plane, uniaxial anisotropy) from total energy of magnetic supercells.  
+Calculate Heisenberg exchange (in-plane and out-of-plane, uniaxial anisotropy) from total energy of magnetic supercells.
+
+![exchange_total_energy](https://github.com/user-attachments/assets/32c171bd-507b-4916-8d4a-0f9ca817d598)
+
 Calculate DMI coefficients to arbitrary neighbor from DFT total energy for a linear chain (for now) - many systems will be equivalent however.
 
 - nice-to-have functions:
