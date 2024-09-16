@@ -1,8 +1,12 @@
 # Heisenberg exchange and DMI from DFT-calculated supercell total energies
 
+<i>**Tools for preparing magnetic supercells and extracting (anisotropic) exchange interaction and DMI from their total energies (calculated for instance by DFT).**</i>
+
 ```
 pip install totEnJ
 ```
+
+If you find this package useful, please cite [L. Vojáček*, J. M. Dueñas* _et al._, Nano Letters (2024)](https://pubs.acs.org/doi/10.1021/acs.nanolett.4c03029).
 
 ## Heisenberg exchange
 
