@@ -4,7 +4,7 @@
 
 Calculate **Heisenberg exchange** (in-plane and out-of-plane, uniaxial anisotropy) from total energy of magnetic supercells.
 
-![exchange_total_energy](https://github.com/user-attachments/assets/32c171bd-507b-4916-8d4a-0f9ca817d598)
+<center><img src="https://github.com/user-attachments/assets/32c171bd-507b-4916-8d4a-0f9ca817d598" alt="exchange_total_energy" width="600" /></center>
 
 ## DMI
 
