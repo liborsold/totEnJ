@@ -8,6 +8,9 @@ pip install totEnJ
 
 If you find this package useful, please cite [L. Vojáček*, J. M. Dueñas* _et al._, Nano Letters (2024)](https://pubs.acs.org/doi/10.1021/acs.nanolett.4c03029).
 
+## Usage
+See the Jupyter notebooks in the `./examples` folder.
+
 ## Heisenberg exchange
 
 Calculate **Heisenberg exchange** (in-plane and out-of-plane, uniaxial anisotropy) from total energy of magnetic supercells.
