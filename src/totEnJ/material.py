@@ -7,18 +7,21 @@ from copy import copy
 from matplotlib.patches import Circle, Polygon
 
 class StructureJ(Structure):
+    
+    def define(self, magnetic_atoms=None, discard_nonmagnetic_atoms=None, magnetic_supercell=None, supercell_out_name=None):
+        """Ideally this would be part of __init__ but there seems to be problem with overriding the 
+            pymatgen's .from_file() constructor. So, this is a workaround.
 
-    def set_magnetic_atoms(self, magnetic_atoms, discard_nonmagnetic_atoms=True):
-        self.magnetic_atoms = magnetic_atoms
-
-    def set_discard_nonmagnetic_atoms(self, discard_nonmagnetic_atoms):
-        self.discard_nonmagnetic_atoms = discard_nonmagnetic_atoms
-
-    def set_magnetic_supercell(self, magnetic_supercell):
-        self.magnetic_supercell = magnetic_supercell
-
-    def set_supercell_out_name(self, supercell_out_name):
-        self.supercell_out_name = supercell_out_name
+        Args:
+            magnetic_atoms (_type_, optional): _description_. Defaults to None.
+            discard_nonmagnetic_atoms (_type_, optional): _description_. Defaults to None.
+            magnetic_supercell (_type_, optional): _description_. Defaults to None.
+            supercell_out_name (_type_, optional): _description_. Defaults to None.
+        """
+        if magnetic_atoms: self.magnetic_atoms = magnetic_atoms
+        if discard_nonmagnetic_atoms: self.discard_nonmagnetic_atoms = discard_nonmagnetic_atoms
+        if magnetic_supercell: self.magnetic_supercell = magnetic_supercell
+        if supercell_out_name: self.supercell_out_name = supercell_out_name
     
     def remove_nonmagnetic_atoms(self):
         self.remove_sites([i for i in range(len(self)) if i not in self.magnetic_atoms])
@@ -182,10 +185,10 @@ class StructureJ(Structure):
         plt.xlabel('Distance (Angstroms)')
         plt.ylabel('Number of interactions')
         plt.title(r'$J_1$' + ' with phantoms for supercell ' + str(self.magnetic_supercell))
-        plt.ylim(0, ylim)
+        # plt.ylim(0, ylim)
         plt.xlim(0, self.neighbor_cutoff*1.05)
         # y ticks in steps of 2
-        plt.yticks(np.arange(ax.get_ylim()[0], ax.get_ylim()[1], 2))
+        # plt.yticks(np.arange(ax.get_ylim()[0], ax.get_ylim()[1], 2))
         # grid parallel to x-axis with step of 1 between lines
         plt.grid(axis='y', linestyle='-', linewidth=0.5, alpha=0.5)
         plt.tight_layout()
