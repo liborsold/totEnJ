@@ -28,7 +28,7 @@ class StructureJ(Structure):
         # label atoms by atom type + index
         for i, site in enumerate(self):
             site.species = site.species_string + str(i+1)
-        self.to(self.supercell_out_name, fmt='poscar')
+        self.to(self.supercell_out_name)
         
     def show_supercell_now(self):
         # see https://pymatgen.org/pymatgen.vis.html#pymatgen.vis.structure_vtk.StructureVis

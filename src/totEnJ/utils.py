@@ -1,5 +1,6 @@
 import numpy as np
 import sympy as sp
+from itertools import product
 
 rounding_precision = 15
 
@@ -33,7 +34,7 @@ def diagonalize_coefficient_matrix(M):
         M (m-by-n matrix of real numbers): _description_
     """
     # ensure that m > n
-    assert M.shape[0] <= M.shape[1], "The number of rows of the matrix must be larger than the number of columns!"
+    assert M.shape[0] >= M.shape[1], "The number of rows of the matrix must be larger than the number of columns!"
     m, n = M.shape
     M_sub = M[:m, :m]
 
@@ -244,7 +245,7 @@ def test_unique_rows_in_matrix():
 
 
 def coeff_matrix_Jxy_Jz_K(lattice='hexagonal_2D', supercell=(4,1,1), order_NN=5):
-    from itertools import product
+
     # E_DFT = M * J
     # E_DFT .... column vector of DFT energies calculated for different spin states with a supercell
     # M .... matrix of equations
@@ -435,3 +436,15 @@ def test_permute_rows():
 # test_unique_rows_in_matrix()
 # test_largest_submatrix_with_nonzero_last_row()
 # test_permute_rows()
+
+def insert_string_before_a_dot(string_original, string_to_insert):
+    """Insert a string before a dot in a string.
+
+    Args:
+        string_original (str): original string
+        string_to_insert (str): string to insert before a dot in the original string
+
+    Returns:
+        str: modified string
+    """
+    return string_original.replace('.', f'{string_to_insert}.') if '.' in string_original else string_original+string_to_insert
