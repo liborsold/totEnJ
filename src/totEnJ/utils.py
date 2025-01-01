@@ -437,6 +437,41 @@ def test_permute_rows():
 # test_largest_submatrix_with_nonzero_last_row()
 # test_permute_rows()
 
+def nn_order_from_distances(distances, round_decimals=5):
+    """Convert an array of distances to an array classifying the order of nearest neighbors based purely on these distances.
+
+    Args:
+        distances (array-like): List of distances to neighbors.
+        round_decimals (int, optional): Number of decimals to round the distances to. Defaults to 5.
+
+    Returns:
+        numpy array: order of nearest neighbors (starting from 1)
+    """
+    distances = np.array(distances)
+    # find unique distances and sort in ascending order
+    unique_distances = np.sort(np.unique(distances.round(decimals=round_decimals)))
+    # dictionary of neighbor labels by distance\
+    nn_order_by_distance = {}
+    for i, distance in enumerate(unique_distances):
+        # 1st nearest neighbor labeled starting from 1 (not from 0)
+        nn_order_by_distance[distance] = i+1
+    # map distances to nn_order_by_distance
+    nn_order = np.vectorize(nn_order_by_distance.get)(distances.round(decimals=round_decimals))
+    return nn_order
+
+
+def count_nn_order_neighbors(neighbors_of_id1_nn_order):
+    """Given a list of nearest neighbor orders, count the number of neighbors of each order.
+
+    Args:
+        neighbors_of_id1_nn_order (array-like): List of nearest neighbor orders.
+
+    Returns:
+        list: List of counts of neighbors of each order; e.g., [2, 4, 0, 8] means there are 2 neighbors of order 1 (i.e., 1st-nearest neighbors), 4 neighbors of order 2, 0 neighbors of order 3, and 8 neighbors of order 4.
+    """
+    return [int(np.sum(neighbors_of_id1_nn_order == i)) for i in range(1, int(max(neighbors_of_id1_nn_order))+1)]
+
+
 def insert_string_before_a_dot(string_original, string_to_insert):
     """Insert a string before a dot in a string.
 

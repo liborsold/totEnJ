@@ -5,6 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from copy import copy
 from matplotlib.patches import Circle, Polygon
+from totEnJ.utils import nn_order_from_distances, count_nn_order_neighbors
 
 class StructureJ(Structure):
     
@@ -50,39 +51,6 @@ class StructureJ(Structure):
         self.neighbor_cutoff = neighbor_cutoff
         self.round_decimals = round_decimals
                 
-        def nn_order_from_distances(distances):
-            """Convert an array of distances to an array classifying the order of nearest neighbors based purely on these distances.
-
-            Args:
-                distances (array-like): List of distances to neighbors.
-
-            Returns:
-                numpy array: order of nearest neighbors (starting from 1)
-            """
-            distances = np.array(distances)
-            # find unique distances and sort in ascending order
-            unique_distances = np.sort(np.unique(distances.round(decimals=self.round_decimals)))
-            # dictionary of neighbor labels by distance\
-            nn_order_by_distance = {}
-            for i, distance in enumerate(unique_distances):
-                # 1st nearest neighbor labeled starting from 1 (not from 0)
-                nn_order_by_distance[distance] = i+1
-            # map distances to nn_order_by_distance
-            nn_order = np.vectorize(nn_order_by_distance.get)(distances.round(decimals=self.round_decimals))
-            return nn_order
-
-
-        def count_nn_order_neighbors(neighbors_of_id1_nn_order):
-            """Given a list of nearest neighbor orders, count the number of neighbors of each order.
-
-            Args:
-                neighbors_of_id1_nn_order (array-like): List of nearest neighbor orders.
-
-            Returns:
-                list: List of counts of neighbors of each order; e.g., [2, 4, 0, 8] means there are 2 neighbors of order 1 (i.e., 1st-nearest neighbors), 4 neighbors of order 2, 0 neighbors of order 3, and 8 neighbors of order 4.
-            """
-            return [int(np.sum(neighbors_of_id1_nn_order == i)) for i in range(1, int(max(neighbors_of_id1_nn_order))+1)]
-
         # find neighbors: neighbors is a list (for each site in the unit cell) of list of PeriodicNeighbor objects ... https://pymatgen.org/pymatgen.core.html#pymatgen.core.structure.PeriodicNeighbor
             # the return type is a [(site, distance) …]
         all_neighbors_for_all_sites = self.get_all_neighbors(self.neighbor_cutoff)
@@ -99,7 +67,7 @@ class StructureJ(Structure):
         neighbors_of_id1_coords = np.array( [neighbor.coords for neighbor in all_neighbors_for_id1] )
         neighbors_of_id1_labels = [neighbor.species_string for neighbor in all_neighbors_for_id1]
         neighbors_of_id1_distances = np.linalg.norm(neighbors_of_id1_coords - id1_coords, axis=1)
-        neighbors_of_id1_nn_order = nn_order_from_distances(neighbors_of_id1_distances)
+        neighbors_of_id1_nn_order = nn_order_from_distances(neighbors_of_id1_distances, round_decimals=self.round_decimals)
         neighbors_of_id1_nn_number = count_nn_order_neighbors(neighbors_of_id1_nn_order)
 
         neighbor_is_type_id2 = [neighbor.species_string == self[id2].species_string for neighbor in all_neighbors_for_id1]
@@ -125,7 +93,7 @@ class StructureJ(Structure):
         neighbors_of_id2_coords = np.array( [neighbor.coords for neighbor in all_neighbors_for_id2] )
         neighbors_of_id2_labels = [neighbor.species_string for neighbor in all_neighbors_for_id2]
         neighbors_of_id2_distances = np.linalg.norm(neighbors_of_id2_coords - id2_coords, axis=1)
-        neighbors_of_id2_nn_order = nn_order_from_distances(neighbors_of_id2_distances)
+        neighbors_of_id2_nn_order = nn_order_from_distances(neighbors_of_id2_distances, round_decimals=self.round_decimals)
         neighbors_of_id2_nn_number = count_nn_order_neighbors(neighbors_of_id2_nn_order)
 
         neighbor_is_type_id1 = [neighbor.species_string == self[id1].species_string for neighbor in all_neighbors_for_id2]
