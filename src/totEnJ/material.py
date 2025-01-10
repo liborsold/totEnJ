@@ -1,4 +1,4 @@
-from pymatgen.core import Lattice, Structure, Molecule
+from pymatgen.core import Lattice, Structure, Molecule, PeriodicNeighbor
 from pymatgen.vis.structure_vtk import StructureVis
 from os.path import exists
 import numpy as np
@@ -6,10 +6,11 @@ import matplotlib.pyplot as plt
 from copy import copy
 from matplotlib.patches import Circle, Polygon
 from totEnJ.utils import nn_order_from_distances, count_nn_order_neighbors
+from totEnJ.HeisenbergHamiltonian import HeisenbergHamiltonian
 
 class StructureJ(Structure):
     
-    def define(self, magnetic_atoms=None, discard_nonmagnetic_atoms=None, magnetic_supercell=None, supercell_out_name=None):
+    def initialize(self, magnetic_atoms=None, discard_nonmagnetic_atoms=None, magnetic_supercell=None, supercell_out_name=None, magnetic_moments=None, neighbor_cutoff=None, round_decimals=None):
         """Ideally this would be part of __init__ but there seems to be problem with overriding the 
             pymatgen's .from_file() constructor. So, this is a workaround.
 
@@ -23,6 +24,12 @@ class StructureJ(Structure):
         if discard_nonmagnetic_atoms: self.discard_nonmagnetic_atoms = discard_nonmagnetic_atoms
         if magnetic_supercell: self.magnetic_supercell = magnetic_supercell
         if supercell_out_name: self.supercell_out_name = supercell_out_name
+        if magnetic_moments: self.magnetic_moments = magnetic_moments
+        if neighbor_cutoff: self.neighbor_cutoff = neighbor_cutoff
+        if round_decimals: self.round_decimals = round_decimals
+
+    def update_magnetic_moments(self, magnetic_moments):
+        self.magnetic_moments = magnetic_moments
     
     def remove_nonmagnetic_atoms(self):
         self.remove_sites([i for i in range(len(self)) if i not in self.magnetic_atoms])
@@ -46,14 +53,90 @@ class StructureJ(Structure):
         visualizer.set_structure(vis_structure)
         visualizer.show()
 
-    def get_J1_with_phantoms_for_supercell(self, four_state_atoms_indeces=(0,1), neighbor_cutoff=15.0, round_decimals=3):
+    def neighbors_analysis(self):
+        """Analyze neighbors for each site in the magnetic unit cell.
+            Calculate their distances from the given site, their order, and the number of neighbors of each order.
         
-        self.neighbor_cutoff = neighbor_cutoff
-        self.round_decimals = round_decimals
-                
-        # find neighbors: neighbors is a list (for each site in the unit cell) of list of PeriodicNeighbor objects ... https://pymatgen.org/pymatgen.core.html#pymatgen.core.structure.PeriodicNeighbor
+            Will be automatically run before the dependent methods: get_J1_with_phantoms_for_supercell(), get_total_energy()
+        """
+        # pymatgen's neighbor search:
+                # find neighbors: neighbors is a list (for each site in the unit cell) of list of PeriodicNeighbor objects ... https://pymatgen.org/pymatgen.core.html#pymatgen.core.structure.PeriodicNeighbor
             # the return type is a [(site, distance) …]
-        all_neighbors_for_all_sites = self.get_all_neighbors(self.neighbor_cutoff)
+        self.all_neighbors_for_all_sites = self.get_all_neighbors(self.neighbor_cutoff)
+
+        # dimensions of neighbor matrices
+        self.N_atoms_in_magnetic_unit_cell = len(self)
+        self.N_neighbors_up_to_cutoff = len(self.all_neighbors_for_all_sites[0])
+  
+        # derived neighbor attributes
+        self.all_neighbors_coords = self.get_neighbors_attribute('coords')
+        self.all_neighbors_distances = self.get_all_neighbors_distances()
+        self.all_neighbors_NN = np.array([nn_order_from_distances(self.all_neighbors_distances[i,:], round_decimals=self.round_decimals) for i in range(self.N_atoms_in_magnetic_unit_cell)])
+        self.all_neighbors_NN_multiplicity = np.array([count_nn_order_neighbors(self.all_neighbors_NN[i,:]) for i in range(self.N_atoms_in_magnetic_unit_cell)])
+
+        self.all_neighbors_labels = self.get_neighbors_attribute('species_string')
+
+        # order neighbors by NN order
+        self.order_all_arrays_by_NN_increasingly()
+
+        # keep
+
+        
+    def order_all_arrays_by_NN_increasingly(self):
+        """Order all arrays by NN order.
+        """
+        # get ordering indeces
+        self.all_neighbors_order = np.argsort(self.all_neighbors_NN, axis=1)
+
+        # order all arrays (first is list of lists, rest are numpy arrays)
+        self.all_neighbors_for_all_sites = [[row[ind] for ind in self.all_neighbors_order[i]] for i, row in enumerate(self.all_neighbors_for_all_sites)]
+        self.all_neighbors_coords = np.take_along_axis(self.all_neighbors_coords, self.all_neighbors_order, axis=1)
+        self.all_neighbors_distances = np.take_along_axis(self.all_neighbors_distances, self.all_neighbors_order, axis=1)
+        self.all_neighbors_NN = np.take_along_axis(self.all_neighbors_NN, self.all_neighbors_order, axis=1)
+        self.all_neighbors_labels = np.take_along_axis(self.all_neighbors_labels, self.all_neighbors_order, axis=1)
+
+    def get_neighbors_attribute(self, attribute):
+        """Get an array of attributes from the all_neighbors_for_all_sites array.
+
+        Args:
+            attribute (str): name of the attribute to get from the objects
+
+        Returns:
+            np.array: 2D array of attributes of all_neighbors_for_all_sites
+        """
+        array_of_attributes = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=type(getattr(self.all_neighbors_for_all_sites[0][0][0], attribute)))
+        for i, row in enumerate(self.all_neighbors_for_all_sites):
+            for j, obj in enumerate(row):
+                array_of_attributes[i,j] = getattr(obj, attribute)
+        return array_of_attributes
+    
+    def get_all_neighbors_distances(self):
+        """Get an array of distances from the all_neighbors_for_all_sites array.
+
+        Returns:
+            np.array: 2D array of distances of all_neighbors_for_all_sites
+        """
+        if not hasattr(self, 'all_neighbors_coords'):
+            self.all_neighbors_coords = self.get_neighbors_attribute('coords')
+
+        # for all the coords subtract the coords of the site, then run np.linalg.norm
+        all_neighbors_distances = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=np.float64)
+
+        for i in range(self.N_atoms_in_magnetic_unit_cell):
+            for j in range(self.N_neighbors_up_to_cutoff):
+                all_neighbors_distances[i,j] = np.linalg.norm(self.all_neighbors_coords[i,j] - self[i].coords)
+        return all_neighbors_distances
+
+    def get_J1_with_phantoms_for_supercell(self, four_state_atoms_indeces=(0,1)):
+
+        # run the neighbors_analysis() method if it hasn't been run yet
+        if not hasattr(self, 'all_neighbors_for_all_sites'):
+            self.neighbors_analysis()
+                
+        # print('All neighbors for all sites:', self.all_neighbors_for_all_sites)
+        # print('len(all_neighbors_for_all_sites):', len(self.all_neighbors_for_all_sites))
+        # print('len(all_neighbors_for_all_sites[0]):', len(self.all_neighbors_for_all_sites[0]))
+        # print('type(all_neighbors_for_all_sites[0][0]):', type(self.all_neighbors_for_all_sites[0][0]))
 
         # for the first four-state-method atom find all his second-type four-state-method-atom friends
         #   : identify how many and which order nearest-neighbor atoms they are
@@ -62,7 +145,7 @@ class StructureJ(Structure):
         id2 = four_state_atoms_indeces[1]
 
         id1_coords = np.array(self[id1].coords)
-        all_neighbors_for_id1 = all_neighbors_for_all_sites[id1]
+        all_neighbors_for_id1 = self.all_neighbors_for_all_sites[id1]
 
         neighbors_of_id1_coords = np.array( [neighbor.coords for neighbor in all_neighbors_for_id1] )
         neighbors_of_id1_labels = [neighbor.species_string for neighbor in all_neighbors_for_id1]
@@ -85,10 +168,9 @@ class StructureJ(Structure):
         # print('Number of id2-type neighbors of order for id1:', neighbors_of_id1_of_type_id2_nn_number)
         # # list of indeces by neighbors
 
-
         # SAME for id2
         id2_coords = np.array(self[id2].coords)
-        all_neighbors_for_id2 = all_neighbors_for_all_sites[id2]
+        all_neighbors_for_id2 = self.all_neighbors_for_all_sites[id2]
 
         neighbors_of_id2_coords = np.array( [neighbor.coords for neighbor in all_neighbors_for_id2] )
         neighbors_of_id2_labels = [neighbor.species_string for neighbor in all_neighbors_for_id2]
@@ -162,7 +244,6 @@ class StructureJ(Structure):
         plt.tight_layout()
         plt.show()
 
-
     def plot_four_state_neighbors(self, invert_colors=False, title='4-state method'):
         fig, ax = plt.subplots(figsize=(6.5, 4.5))
         ax.set_aspect('equal')
@@ -199,4 +280,58 @@ class StructureJ(Structure):
         # print('neighbors_of_id1_nn_order\n', self.neighbors_of_id1_nn_order)
         plt.show()
     
+    def define_Heisenberg_Hamiltonian(self, type='isotropic'):
+        self.HH = HeisenbergHamiltonian(type=type)
 
+    def get_total_energy(self):
+        """
+
+                1. create the arrays site_spins, site_labels, and site_multiplicity needed by 
+                    HeisenbergHamiltonian.whole_system_energy()
+                2. then run HeisenbergHamiltonian.whole_system_energy()
+                3. flatten the output array into a 1D array in a reasonable (user-defined?) way
+        """
+
+        if not hasattr(self, 'all_neighbors_for_all_sites'):
+            self.neighbors_analysis()
+
+        # --- 1. create the arrays ----
+            # dimensions of the 2D arrays: (N_sites_magnetic_unit_cell, N_neighbors_up_to_cutoff)
+            #   - same as all_neighbors_for_all_sites
+
+            # construct the three arrays needed for HeisenbergHamiltonian.whole_system_energy() 
+        site_spins = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff, 3), dtype=np.float64)
+        site_labels = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=np.dtypes.StringDType())
+        site_multiplicity = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=np.int32)
+
+        for i in range(self.N_atoms_in_magnetic_unit_cell):
+            for j in range(self.N_neighbors_up_to_cutoff):
+                site_spins[i,j] = self.magnetic_moments[self.all_neighbors_for_all_sites[i][j].index]
+                site_labels[i,j] = self.all_neighbors_for_all_sites[i][j].species_string
+                site_multiplicity[i,j] = 1
+
+        # --- 2. run HeisenbergHamiltonian.whole_system_energy() ----
+        self.HH.get_total_energy(self.magnetic_moments, site_spins, site_labels, site_multiplicity)
+
+        # --- 3. flatten the output array ----
+           # group depending on the NN order and site labels
+           # order depending on the required order
+           #    most sensible (interaction_type, label1-label2, NN_order), 
+           #       e.g. (Jxx_Cr1Cr2_NN1, Jxx_Cr1Cr2_NN2, Jxx_Cr1Cr3_NN1, Jxx_Cr1Cr3_NN2, Jzz_Cr1Cr2_NN1, Jzz_Cr1Cr2_NN2, Jzz_Cr1Cr3_NN1, Jzz_Cr1Cr3_NN2)
+           #    create labels for this order
+        
+        # print('two_site_parameters', self.HH.two_site_parameters)
+        # print('two_site_prefactors:', self.HH.two_site_prefactors)
+
+        # -> order for each site by the neighbors
+        self.order_neighbors_by_NN_increasingly()
+
+        # keep only first unique NN-order neighbor, and multiply the interaction by the multiplicity
+        self.keep_only_first_unique_NN_order_neighbor()
+
+        # create an array of label pairs
+
+        # -> order by the label pairs
+
+        # now everything is ordered (NN order, label pairs, interaction type as a list)
+        #  -> flatten the array: let user decide the order of indeces

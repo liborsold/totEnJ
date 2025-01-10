@@ -459,7 +459,6 @@ def nn_order_from_distances(distances, round_decimals=5):
     nn_order = np.vectorize(nn_order_by_distance.get)(distances.round(decimals=round_decimals))
     return nn_order
 
-
 def count_nn_order_neighbors(neighbors_of_id1_nn_order):
     """Given a list of nearest neighbor orders, count the number of neighbors of each order.
 
