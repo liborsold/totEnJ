@@ -9,13 +9,13 @@ class HeisenbergHamiltonian:
         """Define what the 'energy' looks like.
 
         Args:
-            type (str, optional): _description_. Defaults to 'scalar'.
+            type (str, optional): Type of the Hamiltonian. Defaults to 'scalar'.
 
         Raises:
-            ValueError: _description_
+            ValueError: if the type is not one of the available types.
 
         Returns:
-            _type_: _description_
+            list of floats: a vector of prefactors of the Hamiltonian parameters between two interacting spins.
         """
         self.type = type
 
@@ -80,7 +80,7 @@ class HeisenbergHamiltonian:
             site_labels (2D-array-like, see above for dimensions): 
             site_multiplicity (2D-array-like, see above for dimensions): all neighbors should be considered equal if Hamiltonian is isotropic
         """
-
+        print('type(site_spins):', type(site_spins))
         assert site_spins.shape[:2] == site_labels.shape == site_multiplicity.shape, f'The number of spins, labels and multiplicities must be the same, but they are {site_spins.shape[:2]}, {site_labels.shape}, and {site_multiplicity.shape}.'
 
         N_atoms_in_magnetic_unit_cell, N_neighbors = site_labels.shape
@@ -92,16 +92,19 @@ class HeisenbergHamiltonian:
         for i in range(N_atoms_in_magnetic_unit_cell):
             for j in range(N_neighbors):
                 # the i-th atom (with spin = magnetic_moments[i]) interacts with its j-th neighbor (with spin = site_spins[i,j])
-                two_site_prefactors[i,j,:] = site_multiplicity[i,j] * self.two_site_energy(magnetic_moments[i], site_spins[i,j])
+                two_site_prefactors[i,j,:] = site_multiplicity[i,j] * np.array(self.two_site_energy(magnetic_moments[i], site_spins[i,j]))
 
         # ---- SINGLE-SITE INTERACTIONS ----
         single_site_prefactors = np.zeros((N_atoms_in_magnetic_unit_cell, N_neighbors, N_single_site_parameters))
         for i in range(N_atoms_in_magnetic_unit_cell):
             for j in range(N_neighbors):
-                single_site_prefactors[i,j,:] = site_multiplicity[i,j] * self.single_site_energy(site_spins[i,j])
+                single_site_prefactors[i,j,:] = site_multiplicity[i,j] * np.array(self.single_site_energy(site_spins[i,j]))
 
         self.two_site_prefactors = two_site_prefactors
         self.single_site_prefactors = single_site_prefactors
+
+        print('single_site_prefactors.shape:', single_site_prefactors.shape)
+        print('two_site_prefactors:', two_site_prefactors.shape)
 
         # DECIDE if the neighbor is in the magnetic unit cell or not
         # if in the supercell, the interaction would be calculated twice!!!

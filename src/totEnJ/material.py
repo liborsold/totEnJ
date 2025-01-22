@@ -9,16 +9,24 @@ from totEnJ.utils import nn_order_from_distances, count_nn_order_neighbors
 from totEnJ.HeisenbergHamiltonian import HeisenbergHamiltonian
 
 class StructureJ(Structure):
+    """Class for the magnetic structure analysis and calculation of the total energy using the Heisenberg Hamiltonian, derived from pymatgen's Structure.
+    """
     
-    def initialize(self, magnetic_atoms=None, discard_nonmagnetic_atoms=None, magnetic_supercell=None, supercell_out_name=None, magnetic_moments=None, neighbor_cutoff=None, round_decimals=None):
+    def initialize(self, magnetic_atoms=None, discard_nonmagnetic_atoms=None, magnetic_supercell=None, 
+                   show_supercell=None, supercell_out_name=None, Heisenberg_Hamiltonian_type=None, 
+                   magnetic_moments=None, neighbor_cutoff=None, round_decimals=None, 
+                   keep_only_first_unique_NN_label_combo=True):
         """Ideally this would be part of __init__ but there seems to be problem with overriding the 
             pymatgen's .from_file() constructor. So, this is a workaround.
 
         Args:
-            magnetic_atoms (_type_, optional): _description_. Defaults to None.
-            discard_nonmagnetic_atoms (_type_, optional): _description_. Defaults to None.
-            magnetic_supercell (_type_, optional): _description_. Defaults to None.
-            supercell_out_name (_type_, optional): _description_. Defaults to None.
+            magnetic_atoms (list of integers, optional): Indeces of the magnetic atoms taking part in the Heisenberg exchange. Defaults to None.
+            discard_nonmagnetic_atoms (bool, optional): Discard nonmagnetic atoms from the structure right at the beginning. Defaults to None.
+            magnetic_supercell (tuple of three integers, optional): Dimensions of the supercell to be created. Defaults to None.
+            supercell_out_name (string, optional): path + file name of the supercell file to be saved. Defaults to None.
+            magnetic_moments (2D numpy array, optional): (N_atoms_in_magnetic_unit_cell, 3) dimensional array of floats indicating the magnetic moment (spin direction) for each atom in the magnetic unit cell. Defaults to None.
+            neighbor_cutoff (float, optional): Radius in Angstrom around each atom within which the neighbors will be considered. Defaults to None.
+            round_decimals (integer, optional): to what decimal point should one round the neighbors distance to be considered equal neighbors. E.g., if round_decimals=1 and the two neighbors would be 3.44 and 3.36 Angstrom far, they will be considered equal. Defaults to None.
         """
         if magnetic_atoms: self.magnetic_atoms = magnetic_atoms
         if discard_nonmagnetic_atoms: self.discard_nonmagnetic_atoms = discard_nonmagnetic_atoms
@@ -27,21 +35,40 @@ class StructureJ(Structure):
         if magnetic_moments: self.magnetic_moments = magnetic_moments
         if neighbor_cutoff: self.neighbor_cutoff = neighbor_cutoff
         if round_decimals: self.round_decimals = round_decimals
+        if discard_nonmagnetic_atoms: self.remove_nonmagnetic_atoms()
+        self.keep_only_first_unique_NN_label_combo = keep_only_first_unique_NN_label_combo
+        print('self before making the supercell', self)
+        self.make_supercell()
+        print('self after making the supercell', self)
+        if show_supercell: self.show_supercell_now()
+        self.neighbors_analysis()
+        if Heisenberg_Hamiltonian_type: self.define_Heisenberg_Hamiltonian(type=Heisenberg_Hamiltonian_type)
 
     def update_magnetic_moments(self, magnetic_moments):
+        """Update magnetic moments before running 'get_total_energy()' method.
+
+        Args:
+            magnetic_moments (2D numpy array): see the 'initialize()' method for detailed explanation.
+        """
         self.magnetic_moments = magnetic_moments
     
     def remove_nonmagnetic_atoms(self):
+        """Remove nonmagnetic atoms from the structure.
+        """
         self.remove_sites([i for i in range(len(self)) if i not in self.magnetic_atoms])
 
     def make_supercell(self):
+        """Make a supercell of the uploaded unit cell and save it to a file. This supercell will serve as the magnetic unit cell.
+        """
         super().make_supercell(self.magnetic_supercell)
         # label atoms by atom type + index
-        for i, site in enumerate(self):
-            site.species = site.species_string + str(i+1)
-        self.to(self.supercell_out_name)
+        # for i, site in enumerate(self):
+        #     site.species = site.species_string + str(i+1)
+        if self.supercell_out_name: self.to(self.supercell_out_name)
         
     def show_supercell_now(self):
+        """Show the supercell in a new window using pymatgen's StructureVis.
+        """
         # see https://pymatgen.org/pymatgen.vis.html#pymatgen.vis.structure_vtk.StructureVis
         # if you didn't remove nonmagnetic atoms, there will probably be multiple atom types
         print('Showing structure in a new window...\n')
@@ -53,7 +80,7 @@ class StructureJ(Structure):
         visualizer.set_structure(vis_structure)
         visualizer.show()
 
-    def neighbors_analysis(self):
+    def neighbors_analysis(self, order_by_NN_increasingly=True):
         """Analyze neighbors for each site in the magnetic unit cell.
             Calculate their distances from the given site, their order, and the number of neighbors of each order.
         
@@ -77,15 +104,23 @@ class StructureJ(Structure):
         self.all_neighbors_labels = self.get_neighbors_attribute('species_string')
 
         # order neighbors by NN order
-        self.order_all_arrays_by_NN_increasingly()
+        if order_by_NN_increasingly:
+            self.order_all_arrays_by_NN_increasingly()
 
-        # keep
+        # create the multiplicity array: by default this is just an array of 1, unless they are grouped 
+        #   as for instance in the  keep_only_first_unique_NNorder_label_combo_neighbor()  method where
+        #   the multiplicity will be overwritten
+        self.all_neighbors_NN_multiplicity = np.ones((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=np.int32)
 
-        
+        # keep only first of the unique NN order neighbors
+        if self.keep_only_first_unique_NN_label_combo:
+            self.keep_only_first_unique_NNorder_label_combo_neighbor()
+
     def order_all_arrays_by_NN_increasingly(self):
         """Order all arrays by NN order.
         """
         # get ordering indeces
+        # !!!!!! add secondary ordering by site label !!!!!
         self.all_neighbors_order = np.argsort(self.all_neighbors_NN, axis=1)
 
         # order all arrays (first is list of lists, rest are numpy arrays)
@@ -95,8 +130,37 @@ class StructureJ(Structure):
         self.all_neighbors_NN = np.take_along_axis(self.all_neighbors_NN, self.all_neighbors_order, axis=1)
         self.all_neighbors_labels = np.take_along_axis(self.all_neighbors_labels, self.all_neighbors_order, axis=1)
 
+    def keep_only_first_unique_NNorder_label_combo_neighbor(self):
+        """Keep only the first unique term of the given NN-site_label combination.
+        """
+        # copy the neighbors array to keep the original
+        self.all_neighbors_for_all_sites_original = copy(self.all_neighbors_for_all_sites)
+        # array of tuples of (order, label) for each site
+        # [N_atoms_in_magnetic_unit_cell, N_neighbors] array of tuples (NN, label)
+        self.all_neighbors_NNorder_label_combo = [[(self.all_neighbors_NN[i,j], self.all_neighbors_labels[i,j]) for j in range(self.N_neighbors_up_to_cutoff)] for i in range(self.N_atoms_in_magnetic_unit_cell)]
+
+        # get unique NN orders and labels
+        self.all_neighbors_NNorder_label_combo_unique_idx = np.array([np.unique(row, axis=0, return_index=True)[1] for row in self.all_neighbors_NNorder_label_combo])
+
+        # get their number of appearances
+        multiplicity = []
+        len_character_tuple = len(self.all_neighbors_NNorder_label_combo[0][0])
+        for i in range(self.N_atoms_in_magnetic_unit_cell):
+            multiplicity.append([])
+            for unique_combo_idx in self.all_neighbors_NNorder_label_combo_unique_idx[i,:]:
+                mult_i = int(np.sum(np.sum(np.array(self.all_neighbors_NNorder_label_combo[i]) == self.all_neighbors_NNorder_label_combo[i][unique_combo_idx], axis=1) == len_character_tuple))
+                multiplicity[i].append(mult_i)
+        self.all_neighbors_NNorder_label_combo_unique_multiplicity = np.array(multiplicity)
+        
+        # keep only the first unique NN order neighbor
+        self.all_neighbors_for_all_sites = [[self.all_neighbors_for_all_sites[i][j] for j in self.all_neighbors_NNorder_label_combo_unique_idx[i]] for i in range(self.N_atoms_in_magnetic_unit_cell)]
+        self.all_neighbors_coords = np.array([self.all_neighbors_coords[i][self.all_neighbors_NNorder_label_combo_unique_idx[i]] for i in range(self.N_atoms_in_magnetic_unit_cell)])
+        self.all_neighbors_distances = np.array([self.all_neighbors_distances[i][self.all_neighbors_NNorder_label_combo_unique_idx[i]] for i in range(self.N_atoms_in_magnetic_unit_cell)])
+        self.all_neighbors_NN = np.array([self.all_neighbors_NN[i][self.all_neighbors_NNorder_label_combo_unique_idx[i]] for i in range(self.N_atoms_in_magnetic_unit_cell)])
+        self.all_neighbors_labels = np.array([self.all_neighbors_labels[i][self.all_neighbors_NNorder_label_combo_unique_idx[i]] for i in range(self.N_atoms_in_magnetic_unit_cell)])
+
     def get_neighbors_attribute(self, attribute):
-        """Get an array of attributes from the all_neighbors_for_all_sites array.
+        """Generic method to get an array of attributes from the all_neighbors_for_all_sites array.
 
         Args:
             attribute (str): name of the attribute to get from the objects
@@ -153,7 +217,10 @@ class StructureJ(Structure):
         neighbors_of_id1_nn_order = nn_order_from_distances(neighbors_of_id1_distances, round_decimals=self.round_decimals)
         neighbors_of_id1_nn_number = count_nn_order_neighbors(neighbors_of_id1_nn_order)
 
-        neighbor_is_type_id2 = [neighbor.species_string == self[id2].species_string for neighbor in all_neighbors_for_id1]
+        # neighbor_is_type_id2 = [neighbor.species_string == self[id2].species_string for neighbor in all_neighbors_for_id1]
+        id2_coords = self[id2].coords
+        neighbor_is_type_id2 = [np.allclose(neighbor.to_unit_cell().coords, id2_coords) for neighbor in all_neighbors_for_id1]
+        
         neighbors_of_id1_of_type_id2_coords = neighbors_of_id1_coords[neighbor_is_type_id2]
         neighbors_of_id1_of_type_id2_distances = neighbors_of_id1_distances[neighbor_is_type_id2]
         neighbors_of_id1_of_type_id2_nn_order = neighbors_of_id1_nn_order[neighbor_is_type_id2]
@@ -178,7 +245,10 @@ class StructureJ(Structure):
         neighbors_of_id2_nn_order = nn_order_from_distances(neighbors_of_id2_distances, round_decimals=self.round_decimals)
         neighbors_of_id2_nn_number = count_nn_order_neighbors(neighbors_of_id2_nn_order)
 
-        neighbor_is_type_id1 = [neighbor.species_string == self[id1].species_string for neighbor in all_neighbors_for_id2]
+        # neighbor_is_type_id1 = [neighbor.species_string == self[id1].species_string for neighbor in all_neighbors_for_id2]
+        id1_coords = self[id1].coords
+        neighbor_is_type_id1 = [np.allclose(neighbor.to_unit_cell().coords, id1_coords) for neighbor in all_neighbors_for_id2]
+        print('neighbor is type id1', neighbor_is_type_id1)
         neighbors_of_id2_of_type_id1_coords = neighbors_of_id2_coords[neighbor_is_type_id1]
         neighbors_of_id2_of_type_id1_distances = neighbors_of_id2_distances[neighbor_is_type_id1]
         neighbors_of_id2_of_type_id1_nn_order = neighbors_of_id2_nn_order[neighbor_is_type_id1]
@@ -205,7 +275,7 @@ class StructureJ(Structure):
         # print('J1 with phantoms:', J1_with_phantoms)
         neighbors_of_id1_distances_unique = np.sort(np.unique(neighbors_of_id1_distances.round(decimals=self.round_decimals)))
         
-        # save data to object
+        # save the calculated data as object attributes
         self.id1_coords = id1_coords
         self.neighbors_of_id1_coords = neighbors_of_id1_coords
         self.neighbors_of_id1_nn_order = neighbors_of_id1_nn_order
@@ -281,6 +351,11 @@ class StructureJ(Structure):
         plt.show()
     
     def define_Heisenberg_Hamiltonian(self, type='isotropic'):
+        """Heisenberg Hamiltonian between two spins
+
+        Args:
+            type (str, optional): Type of Hamiltonian. Defaults to 'isotropic'.
+        """
         self.HH = HeisenbergHamiltonian(type=type)
 
     def get_total_energy(self):
@@ -292,26 +367,18 @@ class StructureJ(Structure):
                 3. flatten the output array into a 1D array in a reasonable (user-defined?) way
         """
 
-        if not hasattr(self, 'all_neighbors_for_all_sites'):
-            self.neighbors_analysis()
-
         # --- 1. create the arrays ----
             # dimensions of the 2D arrays: (N_sites_magnetic_unit_cell, N_neighbors_up_to_cutoff)
             #   - same as all_neighbors_for_all_sites
 
-            # construct the three arrays needed for HeisenbergHamiltonian.whole_system_energy() 
-        site_spins = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff, 3), dtype=np.float64)
-        site_labels = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=np.dtypes.StringDType())
-        site_multiplicity = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=np.int32)
+        if not hasattr(self, 'all_neighbors_for_all_sites'):
+            self.neighbors_analysis()
 
-        for i in range(self.N_atoms_in_magnetic_unit_cell):
-            for j in range(self.N_neighbors_up_to_cutoff):
-                site_spins[i,j] = self.magnetic_moments[self.all_neighbors_for_all_sites[i][j].index]
-                site_labels[i,j] = self.all_neighbors_for_all_sites[i][j].species_string
-                site_multiplicity[i,j] = 1
+        # make an array of magnetic moments for all neighbors of all atoms
+        self.all_neighbors_spins = np.array([[self.magnetic_moments[self.all_neighbors_for_all_sites[i][j].index] for j in range(len(self.all_neighbors_for_all_sites[i]))] for i in range(self.N_atoms_in_magnetic_unit_cell)])
 
         # --- 2. run HeisenbergHamiltonian.whole_system_energy() ----
-        self.HH.get_total_energy(self.magnetic_moments, site_spins, site_labels, site_multiplicity)
+        self.HH.get_total_energy(self.magnetic_moments, self.all_neighbors_spins, self.all_neighbors_labels, self.all_neighbors_NNorder_label_combo_unique_multiplicity)
 
         # --- 3. flatten the output array ----
            # group depending on the NN order and site labels
@@ -320,14 +387,8 @@ class StructureJ(Structure):
            #       e.g. (Jxx_Cr1Cr2_NN1, Jxx_Cr1Cr2_NN2, Jxx_Cr1Cr3_NN1, Jxx_Cr1Cr3_NN2, Jzz_Cr1Cr2_NN1, Jzz_Cr1Cr2_NN2, Jzz_Cr1Cr3_NN1, Jzz_Cr1Cr3_NN2)
            #    create labels for this order
         
-        # print('two_site_parameters', self.HH.two_site_parameters)
+        print('two_site_parameters', self.HH.two_site_parameters)
         # print('two_site_prefactors:', self.HH.two_site_prefactors)
-
-        # -> order for each site by the neighbors
-        self.order_neighbors_by_NN_increasingly()
-
-        # keep only first unique NN-order neighbor, and multiply the interaction by the multiplicity
-        self.keep_only_first_unique_NN_order_neighbor()
 
         # create an array of label pairs
 
@@ -335,3 +396,4 @@ class StructureJ(Structure):
 
         # now everything is ordered (NN order, label pairs, interaction type as a list)
         #  -> flatten the array: let user decide the order of indeces
+
