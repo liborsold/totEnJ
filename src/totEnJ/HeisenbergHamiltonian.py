@@ -65,7 +65,8 @@ class HeisenbergHamiltonian:
     def print_two_site_energy(self, spin1=(1,0,0), spin2=(1,0,0)):
         print(f'The two-site energy prefactors are {self.energy(spin1, spin2).join(', ')}.')
 
-    def get_total_energy(self, magnetic_moments, site_spins, site_labels, site_multiplicity):
+    def get_total_energy(self, magnetic_moments, site_spins, site_labels, site_multiplicity, 
+                         verbose=False):
         """
         Return an array structured as [site_i, its_neighbor_j, interaction_prefactors], 
             one for two-site interactions and one for single-site interactions.
@@ -80,7 +81,7 @@ class HeisenbergHamiltonian:
             site_labels (2D-array-like, see above for dimensions): 
             site_multiplicity (2D-array-like, see above for dimensions): all neighbors should be considered equal if Hamiltonian is isotropic
         """
-        print('type(site_spins):', type(site_spins))
+        if verbose: print('type(site_spins):', type(site_spins))
         assert site_spins.shape[:2] == site_labels.shape == site_multiplicity.shape, f'The number of spins, labels and multiplicities must be the same, but they are {site_spins.shape[:2]}, {site_labels.shape}, and {site_multiplicity.shape}.'
 
         N_atoms_in_magnetic_unit_cell, N_neighbors = site_labels.shape
@@ -103,8 +104,9 @@ class HeisenbergHamiltonian:
         self.two_site_prefactors = two_site_prefactors
         self.single_site_prefactors = single_site_prefactors
 
-        print('single_site_prefactors.shape:', single_site_prefactors.shape)
-        print('two_site_prefactors:', two_site_prefactors.shape)
+        if verbose: print('single_site_prefactors.shape:', single_site_prefactors.shape)
+        if verbose: print('two_site_prefactors:', two_site_prefactors.shape)
+        
 
         # DECIDE if the neighbor is in the magnetic unit cell or not
         # if in the supercell, the interaction would be calculated twice!!!

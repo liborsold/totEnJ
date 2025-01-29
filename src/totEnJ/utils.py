@@ -33,8 +33,8 @@ def diagonalize_coefficient_matrix(M):
     Args:
         M (m-by-n matrix of real numbers): _description_
     """
-    # ensure that m > n
-    assert M.shape[0] >= M.shape[1], "The number of rows of the matrix must be larger than the number of columns!"
+    # ensure that m <= n
+    assert M.shape[0] <= M.shape[1], "The number of rows of the matrix must be smaller than the number of columns!"
     m, n = M.shape
     M_sub = M[:m, :m]
 
@@ -298,7 +298,8 @@ def get_RREF_with_its_transformation_matrix(M):
     I = np.eye(M.shape[0], dtype=np.int64)
     M_I = np.hstack((M, I))
 
-    M_I_rref, ind = sp.Matrix(M_I).rref()
+    # convert to sympy matrix of rational numbers
+    M_I_rref, ind = sp.Matrix([[sp.Rational(value) for value in row] for row in M_I]).rref()
 
     # rescale all rows so that fractions become integers again
       # NOTE: rescaling is done also for the T matrix (right part of M_I) so it will be accounted for in the final T matrix
@@ -317,7 +318,7 @@ def get_RREF_with_its_transformation_matrix(M):
     # sp.pprint(T)
 
     # CHECK:
-    assert np.all( M_rref == T @ M )
+    assert np.all( np.array(M_rref - T @ M) < 1e-10 ), "The RREF matrix M_rref is not equal to the product of the transformation matrix T and the original matrix M!"
     # convert back to numpy
     M_rref = np.array(M_rref, dtype=np.int64)
     return M_rref, T, ind
@@ -468,8 +469,12 @@ def count_nn_order_neighbors(neighbors_of_id1_nn_order):
     Returns:
         list: List of counts of neighbors of each order; e.g., [2, 4, 0, 8] means there are 2 neighbors of order 1 (i.e., 1st-nearest neighbors), 4 neighbors of order 2, 0 neighbors of order 3, and 8 neighbors of order 4.
     """
-    return [int(np.sum(neighbors_of_id1_nn_order == i)) for i in range(1, int(max(neighbors_of_id1_nn_order))+1)]
-
+    # print('neighbors_of_id1_nn_order', neighbors_of_id1_nn_order)
+    # check if its empty list
+    if len(neighbors_of_id1_nn_order) == 0:
+        return []
+    else:
+        return [int(np.sum(neighbors_of_id1_nn_order == i)) for i in range(1, int(max(neighbors_of_id1_nn_order))+1)]
 
 def insert_string_before_a_dot(string_original, string_to_insert):
     """Insert a string before a dot in a string.
@@ -482,3 +487,39 @@ def insert_string_before_a_dot(string_original, string_to_insert):
         str: modified string
     """
     return string_original.replace('.', f'{string_to_insert}.') if '.' in string_original else string_original+string_to_insert
+
+def binary_spin_config_to_vector(binary_state, direction='z'):
+    """Convert a binary spin configuration to a vector representation.
+    E.g. (1, 1, -1) -> [[0, 0, 1], [0, 0, 1], [0, 0, -1]]
+
+    Args:
+        binary_state (tuple): Binary spin configuration; e.g., (1, 1, -1) for spins up-up-down.
+        direction (str, optional): Direction of the spins; 'x', 'y', or 'z'. Defaults to 'z'.
+
+    Returns:
+        numpy array: Vector representation of the binary spin configuration.
+    """
+    direction_to_index = {'x': 0, 'y': 1, 'z': 2}
+    N_spins = len(binary_state)
+    vector_state = np.zeros((N_spins, 3))
+    for i, spin in enumerate(binary_state):
+        vector_state[i, direction_to_index[direction]] = spin
+    return vector_state
+
+def leave_only_first_part_with_letters(string):
+    """Loop through the string and leave only the first part with letters.
+
+    Args:
+        string (str): String to process.
+
+    Returns:
+        str: Processed string.
+    """
+    new_string = ''
+    for char in string:
+        if char.isalpha():
+            new_string += char
+        else:
+            break
+    return new_string
+    

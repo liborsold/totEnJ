@@ -1,12 +1,14 @@
 from pymatgen.core import Lattice, Structure, Molecule, PeriodicNeighbor
+from pymatgen.symmetry.analyzer import PointGroupAnalyzer, cluster_sites, SpacegroupAnalyzer
 from pymatgen.vis.structure_vtk import StructureVis
 from os.path import exists
 import numpy as np
 import matplotlib.pyplot as plt
 from copy import copy
 from matplotlib.patches import Circle, Polygon
-from totEnJ.utils import nn_order_from_distances, count_nn_order_neighbors
+from totEnJ.utils import nn_order_from_distances, count_nn_order_neighbors, leave_only_first_part_with_letters
 from totEnJ.HeisenbergHamiltonian import HeisenbergHamiltonian
+import pandas as pd
 
 class StructureJ(Structure):
     """Class for the magnetic structure analysis and calculation of the total energy using the Heisenberg Hamiltonian, derived from pymatgen's Structure.
@@ -37,12 +39,17 @@ class StructureJ(Structure):
         if round_decimals: self.round_decimals = round_decimals
         if discard_nonmagnetic_atoms: self.remove_nonmagnetic_atoms()
         self.keep_only_first_unique_NN_label_combo = keep_only_first_unique_NN_label_combo
+        if Heisenberg_Hamiltonian_type: self.define_Heisenberg_Hamiltonian(type=Heisenberg_Hamiltonian_type)
+
         print('self before making the supercell', self)
         self.make_supercell()
         print('self after making the supercell', self)
         if show_supercell: self.show_supercell_now()
+
+        self.neighbors_analysis_clustering()
+
         self.neighbors_analysis()
-        if Heisenberg_Hamiltonian_type: self.define_Heisenberg_Hamiltonian(type=Heisenberg_Hamiltonian_type)
+        
 
     def update_magnetic_moments(self, magnetic_moments):
         """Update magnetic moments before running 'get_total_energy()' method.
@@ -99,9 +106,42 @@ class StructureJ(Structure):
         self.all_neighbors_coords = self.get_neighbors_attribute('coords')
         self.all_neighbors_distances = self.get_all_neighbors_distances()
         self.all_neighbors_NN = np.array([nn_order_from_distances(self.all_neighbors_distances[i,:], round_decimals=self.round_decimals) for i in range(self.N_atoms_in_magnetic_unit_cell)])
-        self.all_neighbors_NN_multiplicity = np.array([count_nn_order_neighbors(self.all_neighbors_NN[i,:]) for i in range(self.N_atoms_in_magnetic_unit_cell)])
+        # self.all_neighbors_NN_multiplicity = np.array([count_nn_order_neighbors(self.all_neighbors_NN[i,:]) for i in range(self.N_atoms_in_magnetic_unit_cell)])
 
-        self.all_neighbors_labels = self.get_neighbors_attribute('species_string')
+        print('all_neighbors_NN:', self.all_neighbors_NN)
+        # print('all_neighbors_NN_multiplicity:', self.all_neighbors_NN_multiplicity)
+
+        self.center_atom_labels = self.get_center_atom_attribute('label')
+
+        print('------------ orig data:', self.center_atom_labels[0,0])
+        
+        self.all_neighbors_labels = self.get_neighbors_attribute('label')
+
+        self.all_neighbors_images = self.get_neighbors_attribute('image')
+
+        self.center_atom_index = self.get_center_atom_index()
+        self.all_neighbors_index = self.get_neighbors_attribute('index')
+
+        print('type(self.all_neighbor_images[0,0]):', type(self.all_neighbors_images[0,0]))
+
+        data = [self.center_atom_index.flatten(), self.center_atom_labels.flatten(), self.all_neighbors_index.flatten(), self.all_neighbors_labels.flatten(), self.all_neighbors_images.flatten(), self.all_neighbors_distances.flatten(), self.all_neighbors_NN.flatten()]
+        column_names = ['center_atom_index', 'center_atom_label', 'neighbor_index', 'neighbor_label', 'neighbor_image', 'distance', 'NN_order']
+        
+        # empty pandas table with dimensions of the data
+        self.two_site_interaction_table = pd.DataFrame()
+
+        # fill the pandas table with the data
+        for i, name in enumerate(column_names):
+            self.two_site_interaction_table[name] = data[i]
+
+        self.get_total_energy_prefactors_for_pandas_table()
+
+        self.aggregate_pandas_table()
+
+        print('Two-site interaction table:\n', self.two_site_interaction_table)
+
+        print('------------ data:', self.center_atom_labels[0,0])
+
 
         # order neighbors by NN order
         if order_by_NN_increasingly:
@@ -168,11 +208,43 @@ class StructureJ(Structure):
         Returns:
             np.array: 2D array of attributes of all_neighbors_for_all_sites
         """
-        array_of_attributes = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=type(getattr(self.all_neighbors_for_all_sites[0][0][0], attribute)))
+        typ = type(getattr(self.all_neighbors_for_all_sites[0][0][0], attribute))
+        if typ == str:
+            typ = 'U8'
+        array_of_attributes = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=typ)
         for i, row in enumerate(self.all_neighbors_for_all_sites):
             for j, obj in enumerate(row):
                 array_of_attributes[i,j] = getattr(obj, attribute)
         return array_of_attributes
+    
+    def get_center_atom_attribute(self, attribute):
+        """Generic method to get an array of attributes for the center atom of all the neighbors.
+        Has the same dimensions as 'get_neighbors_attribute()' result.
+
+        Args:
+            attribute (str): name of the attribute to get from the center atom
+
+        Returns:
+            np.array: 2D array of attributes of all_neighbors_for_all_sites
+        """
+        typ = type(getattr(self.all_neighbors_for_all_sites[0][0][0], attribute))
+        # if typ is string-like
+        if typ == str:
+            typ = 'U8'
+        array_of_attributes = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=typ)
+        for i, row in enumerate(self.all_neighbors_for_all_sites):
+            for j, obj in enumerate(row):
+                # for all j it is identical, because here we only care about i - the center atom
+                array_of_attributes[i,j] = getattr(self[i], attribute)
+        return array_of_attributes
+    
+    def get_center_atom_index(self):
+        """Get the index of the center atom for each neighbor.
+
+        Returns:
+            np.array: 2D array of center atom indeces
+        """
+        return np.array([[i for j in range(self.N_neighbors_up_to_cutoff)] for i in range(self.N_atoms_in_magnetic_unit_cell)])
     
     def get_all_neighbors_distances(self):
         """Get an array of distances from the all_neighbors_for_all_sites array.
@@ -195,6 +267,7 @@ class StructureJ(Structure):
 
         # run the neighbors_analysis() method if it hasn't been run yet
         if not hasattr(self, 'all_neighbors_for_all_sites'):
+            # !!! YOU WILL PROBABLY HAVE TO SWITCH OFF KEEPING THE FIRST UNIQUE NN LABEL COMBO !!!
             self.neighbors_analysis()
                 
         # print('All neighbors for all sites:', self.all_neighbors_for_all_sites)
@@ -248,7 +321,7 @@ class StructureJ(Structure):
         # neighbor_is_type_id1 = [neighbor.species_string == self[id1].species_string for neighbor in all_neighbors_for_id2]
         id1_coords = self[id1].coords
         neighbor_is_type_id1 = [np.allclose(neighbor.to_unit_cell().coords, id1_coords) for neighbor in all_neighbors_for_id2]
-        print('neighbor is type id1', neighbor_is_type_id1)
+        # print('neighbor is type id1', neighbor_is_type_id1)
         neighbors_of_id2_of_type_id1_coords = neighbors_of_id2_coords[neighbor_is_type_id1]
         neighbors_of_id2_of_type_id1_distances = neighbors_of_id2_distances[neighbor_is_type_id1]
         neighbors_of_id2_of_type_id1_nn_order = neighbors_of_id2_nn_order[neighbor_is_type_id1]
@@ -264,15 +337,15 @@ class StructureJ(Structure):
 
         # sum them up
         J1_with_phantoms = np.array(neighbors_of_id1_of_type_id2_nn_number) + np.array(neighbors_of_id2_of_type_id1_nn_number)
-        # the lowest -nearest neighbor interaction incorrectly includes one more interaction
-        # lowest non-zero value
-        # index for lowest non-zero value of J1_with_phantoms
-        for i in range(len(J1_with_phantoms)):
-            if J1_with_phantoms[i] != 0:
-                J1_with_phantoms[i] -= 1
-                break    
+        # # NO IT DOES NOT!  the lowest -nearest neighbor interaction incorrectly includes one more interaction
+        # # lowest non-zero value
+        # # index for lowest non-zero value of J1_with_phantoms
+        # for i in range(len(J1_with_phantoms)):
+        #     if J1_with_phantoms[i] != 0:
+        #         J1_with_phantoms[i] -= 1
+        #         break    
 
-        # print('J1 with phantoms:', J1_with_phantoms)
+        print('J1 with phantoms:', J1_with_phantoms)
         neighbors_of_id1_distances_unique = np.sort(np.unique(neighbors_of_id1_distances.round(decimals=self.round_decimals)))
         
         # save the calculated data as object attributes
@@ -314,7 +387,7 @@ class StructureJ(Structure):
         plt.tight_layout()
         plt.show()
 
-    def plot_four_state_neighbors(self, invert_colors=False, title='4-state method'):
+    def plot_four_state_neighbors(self, invert_id1_and_id2=False, title='4-state method'):
         fig, ax = plt.subplots(figsize=(6.5, 4.5))
         ax.set_aspect('equal')
         ax.set_xlim(-self.neighbor_cutoff*1.4, self.neighbor_cutoff*1.4)
@@ -322,23 +395,39 @@ class StructureJ(Structure):
         ax.set_xlabel(r'$x$ ($\mathrm{\AA}$)')
         ax.set_ylabel(r'$y$ ($\mathrm{\AA}$)')
         ax.set_title(title)
+
+        if invert_id1_and_id2:
+            neighbors_of_id_distances = self.neighbors_of_id2_distances
+            id_coords = self.id2_coords
+            neighbors_of_id_coords = self.neighbors_of_id2_coords
+            neighbors_of_id_nn_order = self.neighbors_of_id2_nn_order
+            neighbors_of_idx_of_type_idy_coords = self.neighbors_of_id2_of_type_id1_coords
+        else:
+            neighbors_of_id_distances = self.neighbors_of_id1_distances
+            id_coords = self.id1_coords
+            neighbors_of_id_coords = self.neighbors_of_id1_coords
+            neighbors_of_id_nn_order = self.neighbors_of_id1_nn_order
+            neighbors_of_idx_of_type_idy_coords = self.neighbors_of_id1_of_type_id2_coords
+
+        c1 = 'r' if invert_id1_and_id2 else 'g'
+        c2 = 'g' if invert_id1_and_id2 else 'r'
+
         # radii circles
-        for r in np.unique(self.neighbors_of_id1_distances.round(decimals=self.round_decimals)):
-            ax.add_patch(Circle((self.id1_coords[0], self.id1_coords[1]), radius=r, fill=False, color='k', linewidth=0.25))
+        for r in np.unique(neighbors_of_id_distances.round(decimals=self.round_decimals)):
+            ax.add_patch(Circle((id_coords[0], id_coords[1]), radius=r, fill=False, color='k', linewidth=0.25))
         # atoms
         size = 100
-        ax.scatter(self.neighbors_of_id1_coords[:,0], self.neighbors_of_id1_coords[:,1], facecolors='w', edgecolors='w', linewidths=1, s=size*1.35, label='neighbor_margin')
-        ax.scatter(self.neighbors_of_id1_coords[:,0], self.neighbors_of_id1_coords[:,1], facecolors='w', edgecolors='k', linewidths=1, s=size, label='neighbors')
-        for i, xy in enumerate(self.neighbors_of_id1_coords):
-            ax.annotate(self.neighbors_of_id1_nn_order[i], (xy[0], xy[1]), fontsize=6, color='k', ha='center', va='center')
+        ax.scatter(neighbors_of_id_coords[:,0], neighbors_of_id_coords[:,1], facecolors='w', edgecolors='w', linewidths=1, s=size*1.35, label='neighbor_margin')
+        ax.scatter(neighbors_of_id_coords[:,0], neighbors_of_id_coords[:,1], facecolors='w', edgecolors='k', linewidths=1, s=size, label='neighbors')
+        for i, xy in enumerate(neighbors_of_id_coords):
+            ax.annotate(neighbors_of_id_nn_order[i], (xy[0], xy[1]), fontsize=6, color='k', ha='center', va='center')
         # four-state atoms
-        c1 = 'r' if invert_colors else 'g'
-        c2 = 'g' if invert_colors else 'r'
-        ax.scatter(self.id1_coords[0], self.id1_coords[1], facecolors='w', edgecolors=c1, linewidths=1, s=size, label='id1')
-        ax.annotate('0', (self.id1_coords[0], self.id1_coords[1]), fontsize=6, color='k', ha='center', va='center')
 
-        for id2_each_coords in self.neighbors_of_id1_of_type_id2_coords:
-            ax.scatter(id2_each_coords[0], id2_each_coords[1], facecolors='w', edgecolors=c2, linewidths=1, s=size, label='id2')
+        ax.scatter(id_coords[0], id_coords[1], facecolors='w', edgecolors=c1, linewidths=1, s=size, label='id1')
+        ax.annotate('0', (id_coords[0], id_coords[1]), fontsize=6, color='k', ha='center', va='center')
+
+        for id_each_coords in neighbors_of_idx_of_type_idy_coords:
+            ax.scatter(id_each_coords[0], id_each_coords[1], facecolors='w', edgecolors=c2, linewidths=1, s=size, label='id2')
         # ax.annotate(neighbors_of_id1_nn_order[id2], (id2_coords[0], id2_coords[1]), fontsize=6, color='k', ha='center', va='center')
 
         # plot structure's unit cell
@@ -358,7 +447,14 @@ class StructureJ(Structure):
         """
         self.HH = HeisenbergHamiltonian(type=type)
 
-    def get_total_energy(self):
+    def get_all_neighbors_multiplicity(self):
+        """Get an array in the form of 'all_neighbors_NN_multiplicity' but here it will be just 1 for all the 
+            neighbors. 
+        """
+        all_neighbors_multiplicity = np.ones((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=np.float64)
+        self.all_neighbors_multiplicity = all_neighbors_multiplicity
+
+    def get_total_energy(self, verbose=False):
         """
 
                 1. create the arrays site_spins, site_labels, and site_multiplicity needed by 
@@ -378,7 +474,16 @@ class StructureJ(Structure):
         self.all_neighbors_spins = np.array([[self.magnetic_moments[self.all_neighbors_for_all_sites[i][j].index] for j in range(len(self.all_neighbors_for_all_sites[i]))] for i in range(self.N_atoms_in_magnetic_unit_cell)])
 
         # --- 2. run HeisenbergHamiltonian.whole_system_energy() ----
-        self.HH.get_total_energy(self.magnetic_moments, self.all_neighbors_spins, self.all_neighbors_labels, self.all_neighbors_NNorder_label_combo_unique_multiplicity)
+        
+        # !!!!!!!!!
+        if not hasattr(self, 'all_neighbors_multiplicity'):
+            self.get_all_neighbors_multiplicity()
+        # !!!!!!!!!
+        
+        # !!! don't care for the below multiplicity: will be implemented through pandas !!!
+        #       -----> don't care for this:::  self.all_neighbors_NNorder_label_combo_unique_multiplicity
+        
+        self.HH.get_total_energy(self.magnetic_moments, self.all_neighbors_spins, self.all_neighbors_labels, self.all_neighbors_multiplicity)
 
         # --- 3. flatten the output array ----
            # group depending on the NN order and site labels
@@ -386,8 +491,27 @@ class StructureJ(Structure):
            #    most sensible (interaction_type, label1-label2, NN_order), 
            #       e.g. (Jxx_Cr1Cr2_NN1, Jxx_Cr1Cr2_NN2, Jxx_Cr1Cr3_NN1, Jxx_Cr1Cr3_NN2, Jzz_Cr1Cr2_NN1, Jzz_Cr1Cr2_NN2, Jzz_Cr1Cr3_NN1, Jzz_Cr1Cr3_NN2)
            #    create labels for this order
+
+
+           # A. START SLOOOOOW
+            # --- first do the summation by order for a single parameter - e.g., the J
+        prefactors = self.HH.two_site_prefactors[:,:,0].flatten()
+        orders = self.all_neighbors_NN.flatten()
+
+        prefactors_summed = []
+        for i in range(1, max(orders)+1):
+            prefactors_summed.append(np.sum(prefactors[orders == i]))
         
-        print('two_site_parameters', self.HH.two_site_parameters)
+        # prepend total energy of the unit cell times number of unit cells in the supercell
+        prefactors_summed.insert(0, np.prod(self.magnetic_supercell))
+
+        # list to numpy array
+        prefactors_summed = np.array(prefactors_summed)
+        
+        if verbose: print('single_site_parameters', self.HH.single_site_parameters)
+        if verbose: print('two_site_parameters', self.HH.two_site_parameters)
+        
+        self.prefactors_summed = prefactors_summed
         # print('two_site_prefactors:', self.HH.two_site_prefactors)
 
         # create an array of label pairs
@@ -397,3 +521,163 @@ class StructureJ(Structure):
         # now everything is ordered (NN order, label pairs, interaction type as a list)
         #  -> flatten the array: let user decide the order of indeces
 
+    def get_total_energy_clustering(self):
+        """Get the total energy using unique sites and clustered neighbors.
+        """
+        # make a pandas array and fill it with all the pre-computed arrays
+
+
+    def plot_system_spin_config(self, id_main_atom=0):
+        """Plot the system atoms with arrows for spin for the current spin configuration.
+        This is different from plotting four-state configurations, where we only care about colouring two chosen atoms and counting number of their interactions.
+        Here it is the whole spin configuration that matters.
+        These configurations are used for diagonalization.
+        """
+        fig, ax = plt.subplots(figsize=(6.5, 4.5))
+        ax.set_aspect('equal')
+        ax.set_xlim(-self.neighbor_cutoff*1.4, self.neighbor_cutoff*1.4)
+        ax.set_ylim(-self.neighbor_cutoff*1.4, self.neighbor_cutoff*1.4)
+        ax.set_xlabel(r'$x$ ($\mathrm{\AA}$)')
+        ax.set_ylabel(r'$y$ ($\mathrm{\AA}$)')
+        ax.set_title('Spin configuration')
+
+        id_coords = self[id_main_atom].coords
+        neighbors_of_id_coords = np.stack(self.all_neighbors_coords[id_main_atom], axis=0)
+        print('type', type(neighbors_of_id_coords))
+        print('shape', neighbors_of_id_coords.shape)
+        print('neighbors_of_id_coords\n', neighbors_of_id_coords)
+
+        neighbors_of_id_nn_order = self.all_neighbors_NN[id_main_atom]
+
+        # radii circles
+        for r in np.unique(self.all_neighbors_distances[id_main_atom].round(decimals=self.round_decimals)):
+            ax.add_patch(Circle((id_coords[0], id_coords[1]), radius=r, fill=False, color='k', linewidth=0.25))
+        # atoms
+        size = 100
+        ax.scatter(neighbors_of_id_coords[:,0], neighbors_of_id_coords[:,1], facecolors='w', edgecolors='w', linewidths=1, s=size*1.35, label='neighbor_margin')
+        ax.scatter(neighbors_of_id_coords[:,0], neighbors_of_id_coords[:,1], facecolors='w', edgecolors='k', linewidths=1, s=size, label='neighbors')
+        for i, xy in enumerate(neighbors_of_id_coords):
+            ax.annotate(neighbors_of_id_nn_order[i], (xy[0], xy[1]), fontsize=6, color='k', ha='center', va='center')
+        
+        ax.scatter(id_coords[0], id_coords[1], facecolors='w', edgecolors='k', linewidths=1, s=size, label='id1')
+        ax.annotate('0', (id_coords[0], id_coords[1]), fontsize=6, color='k', ha='center', va='center')
+
+        # plot structure's unit cell
+        unit_cell_2D_vectors = self.lattice.matrix[:2, :2]
+        polygon = [[0,0], unit_cell_2D_vectors[0], unit_cell_2D_vectors[0] + unit_cell_2D_vectors[1], unit_cell_2D_vectors[1]]
+        ax.add_patch(Polygon(polygon, fill=False, color='k', linewidth=1.0))
+        
+        plt.show()
+
+
+    def neighbors_analysis_clustering(self, verbose=True):
+        """Find unique sites of the symmetrized magnetic unit cell.
+        Label by unique labels! Attribute unique lables (chemical element + integer if multiple non-equivalent chemical element sites present).
+        For all atoms perform a clustering analysis.
+        Create a mapping of site_i-site_j to interaction identifier:
+            - site: ((periodic image tuple), site index)
+            - interaction identifier in the form (label_i, label_j, NN_order)
+
+        Args:
+            verbose (bool, optional): Print the results of the clustering analysis. Defaults to True.
+
+        Saves:
+            self.equiv_site_idx (list of lists): Each list contains the indeces of the equivalent sites.
+            self.N_unique_sites_in_unitcell (int): Number of unique sites in the unit cell.
+            self.neighbors_of_each_first_equiv_site (list of dicts): Each dict contains the clustering of the neighbors of the first site of the equivalent sites.
+        """
+
+        # ==== 1. UNIQUE LABELS ====
+        sga = SpacegroupAnalyzer(self)
+        system_symmetrized = sga.get_symmetrized_structure()
+        self.equiv_site_idx = system_symmetrized.equivalent_indices
+        self.N_unique_sites_in_unitcell = len(self.equiv_site_idx)
+
+        self.create_labels_for_unique_sites()
+
+        if verbose:
+            print('self.equiv_site_idx', self.equiv_site_idx)
+            print('SYTEM LABELED by unique sites', self)
+
+        self.all_clusters = []
+
+        # ==== 2. CLUSTERs of neighbors for all sites ====
+        for i in range(self.N_atoms_in_magnetic_unit_cell):
+
+            # get neighbors for the first site of the equivalent sites
+            neighbors_i = self.get_neighbors(self[i], self.neighbor_cutoff, )
+
+            # get the point group of neighbors of atom i
+            molecule_i = Molecule.from_sites(neighbors_i)
+            pga = PointGroupAnalyzer(molecule_i)
+
+            if verbose: 
+                print(pga.sch_symbol) # show the point group
+                print(molecule_i.center_of_mass) # show the point group's center
+
+            # cluster atoms
+            cluster_i = cluster_sites(molecule_i, 10**(-self.round_decimals))
+
+            self.all_clusters.append(cluster_i[1])
+
+            # my_cluster[0] should give the origin site (atom i) or None, if there is no atom there
+            # #   gives None in our case
+            if verbose: 
+                # my_cluster[1] gives a dict of {(avg_dist, species_and_occu): [list of sites]}
+                print(cluster_i[0])
+                for key, cluster in cluster_i[1].items():
+                    print(len(cluster), key, cluster)
+
+
+    def create_labels_for_unique_sites(self, verbose=True):
+        """CREATE LABELS FOR THE UNIQUE SITES
+          1. determine if there are multiple unique site groups for each chemical element
+          2. create labels for the unique sites - no index if only one group for given chemical element, index if multiple
+        
+        Saves:
+            self.labels_of_each_equiv_group (list): Labels of each group of equivalent sites.
+        """
+        element_of_each_equiv_group = [leave_only_first_part_with_letters(self[equiv_sites[0]].species_string) for equiv_sites in self.equiv_site_idx] # e.g. ['Cr', 'Cr', 'I'] if there are two non-equivalent Cr
+        self.labels_of_each_equiv_group = []
+        if verbose: print('element of each equiv group', element_of_each_equiv_group)
+        element_occurences = {str(element): element_of_each_equiv_group.count(element) for element in np.unique(element_of_each_equiv_group)} # e.g. {'Cr': 2, 'I': 1} for the above
+        if verbose: print('element occurences', element_occurences)
+        element_already_occured = {str(element): 0 for element in np.unique(element_of_each_equiv_group)} # initialize to e.g. {'Cr': 0, 'I': 0}
+        if verbose: print('element already occured', element_already_occured)
+        for equiv_idx, element in zip(self.equiv_site_idx, element_of_each_equiv_group):
+            element_already_occured[element] += 1
+            label = element if element_occurences[element] == 1 else element + str(element_already_occured[element])
+            self.labels_of_each_equiv_group.append(label)
+            # label all the equivalent sites with the same label (e.g. Cr1 or Cr2 if more non-equivalent Cr, or simply Cr if only one equivalent Cr group)
+            for i in equiv_idx:
+                self[i].label = label
+
+    def get_total_energy_prefactors_for_pandas_table(self):
+        # loop over all sites
+
+        N_two_site_parameters = len(self.HH.two_site_parameters)
+        N_pairs = len(self.two_site_interaction_table)
+
+        parameter_prefactors = np.zeros((N_pairs, N_two_site_parameters), dtype=np.float64)
+
+        for i,row in self.two_site_interaction_table.iterrows():
+            print('row', row)
+            print("row['center_atom_index']", row['center_atom_index'])
+            print("type(row['center_atom_index'])", type(row['center_atom_index']))
+
+            # get the two-site parameters for all pairs
+            parameter_prefactors[i,:] = self.HH.two_site_energy(self.magnetic_moments[row['center_atom_index']], self.magnetic_moments[row['neighbor_index']])
+
+        for i, parameter in enumerate(self.HH.two_site_parameters):
+            self.two_site_interaction_table[parameter] = parameter_prefactors[:,i]
+
+    def aggregate_pandas_table(self):
+        # group by 'center_atom_index', secondarily by 'neighbor_index' and tertiary by 'NN_order'
+        # then sum all J and D
+        table_grouped = self.two_site_interaction_table.groupby(['center_atom_label', 'neighbor_label', 'NN_order'])
+        
+        # SUM only J and D
+        table_grouped = table_grouped.agg({'distance': 'first', 'J': 'sum', 'D': 'sum'})
+
+        print('TABLE SUMMED')
+        print(table_grouped)
