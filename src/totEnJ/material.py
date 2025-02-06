@@ -1,4 +1,4 @@
-from pymatgen.core import Lattice, Structure, Molecule, PeriodicNeighbor
+from pymatgen.core import Lattice, Structure, Molecule, PeriodicNeighbor, Composition
 from pymatgen.symmetry.analyzer import PointGroupAnalyzer, cluster_sites, SpacegroupAnalyzer
 from pymatgen.vis.structure_vtk import StructureVis
 from os.path import exists
@@ -102,7 +102,7 @@ class StructureJ(Structure):
         self.N_atoms_in_magnetic_unit_cell = len(self)
         self.N_neighbors_up_to_cutoff = len(self.all_neighbors_for_all_sites[0])
   
-        # derived neighbor attributes
+        # ==== DERIVED ATTRIBUTES ====
         self.all_neighbors_coords = self.get_neighbors_attribute('coords')
         self.all_neighbors_distances = self.get_all_neighbors_distances()
         self.all_neighbors_NN = np.array([nn_order_from_distances(self.all_neighbors_distances[i,:], round_decimals=self.round_decimals) for i in range(self.N_atoms_in_magnetic_unit_cell)])
@@ -112,9 +112,6 @@ class StructureJ(Structure):
         # print('all_neighbors_NN_multiplicity:', self.all_neighbors_NN_multiplicity)
 
         self.center_atom_labels = self.get_center_atom_attribute('label')
-
-        print('------------ orig data:', self.center_atom_labels[0,0])
-        
         self.all_neighbors_labels = self.get_neighbors_attribute('label')
 
         self.all_neighbors_images = self.get_neighbors_attribute('image')
@@ -122,15 +119,16 @@ class StructureJ(Structure):
         self.center_atom_index = self.get_center_atom_index()
         self.all_neighbors_index = self.get_neighbors_attribute('index')
 
-        print('type(self.all_neighbor_images[0,0]):', type(self.all_neighbors_images[0,0]))
+        # cluster index for all neighbors
+        self.all_neighbors_cluster_index = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=np.int32)
+        for i, row in enumerate(self.all_neighbors_for_all_sites):
+            for j, neighbor in enumerate(row):
+                self.all_neighbors_cluster_index[i,j] = self.get_cluster_index(i, neighbor)
 
+        # ==== PANDAS TABLE OF TWO-SITE INTERACTIONS ====
+        self.two_site_interaction_table = pd.DataFrame()
         data = [self.center_atom_index.flatten(), self.center_atom_labels.flatten(), self.all_neighbors_index.flatten(), self.all_neighbors_labels.flatten(), self.all_neighbors_images.flatten(), self.all_neighbors_distances.flatten(), self.all_neighbors_NN.flatten()]
         column_names = ['center_atom_index', 'center_atom_label', 'neighbor_index', 'neighbor_label', 'neighbor_image', 'distance', 'NN_order']
-        
-        # empty pandas table with dimensions of the data
-        self.two_site_interaction_table = pd.DataFrame()
-
-        # fill the pandas table with the data
         for i, name in enumerate(column_names):
             self.two_site_interaction_table[name] = data[i]
 
@@ -602,7 +600,7 @@ class StructureJ(Structure):
         self.all_clusters = []
 
         # ==== 2. CLUSTERs of neighbors for all sites ====
-        for i in range(self.N_atoms_in_magnetic_unit_cell):
+        for i in range(len(self)):
 
             # get neighbors for the first site of the equivalent sites
             neighbors_i = self.get_neighbors(self[i], self.neighbor_cutoff, )
@@ -620,10 +618,10 @@ class StructureJ(Structure):
 
             self.all_clusters.append(cluster_i[1])
 
-            # my_cluster[0] should give the origin site (atom i) or None, if there is no atom there
+            # cluster_i[0] should give the origin site (atom i) or None, if there is no atom there
             # #   gives None in our case
             if verbose: 
-                # my_cluster[1] gives a dict of {(avg_dist, species_and_occu): [list of sites]}
+                # cluster_i[1] gives a dict of {(avg_dist, species_and_occu): [list of sites]}
                 print(cluster_i[0])
                 for key, cluster in cluster_i[1].items():
                     print(len(cluster), key, cluster)
@@ -632,7 +630,7 @@ class StructureJ(Structure):
     def create_labels_for_unique_sites(self, verbose=True):
         """CREATE LABELS FOR THE UNIQUE SITES
           1. determine if there are multiple unique site groups for each chemical element
-          2. create labels for the unique sites - no index if only one group for given chemical element, index if multiple
+          2. create labels for the unique sites - no index if only one group for given chemical element, added index if multiple
         
         Saves:
             self.labels_of_each_equiv_group (list): Labels of each group of equivalent sites.
@@ -646,11 +644,25 @@ class StructureJ(Structure):
         if verbose: print('element already occured', element_already_occured)
         for equiv_idx, element in zip(self.equiv_site_idx, element_of_each_equiv_group):
             element_already_occured[element] += 1
-            label = element if element_occurences[element] == 1 else element + str(element_already_occured[element])
-            self.labels_of_each_equiv_group.append(label)
+            species_label = element if element_occurences[element] == 1 else element + str(element_already_occured[element])
+            self.labels_of_each_equiv_group.append(species_label)
             # label all the equivalent sites with the same label (e.g. Cr1 or Cr2 if more non-equivalent Cr, or simply Cr if only one equivalent Cr group)
             for i in equiv_idx:
-                self[i].label = label
+                # change the species to a composition with species 'species_label' and occupancy 1.0
+                self[i].species = Composition({species_label: 1.0})
+
+    def get_cluster_index(self, i, neighbor):
+        """Given the index of the center atom and its neighbor, find the cluster index of the neighbor.
+
+        Args:
+            i (integer): index of the central atom
+            neighbor (PeriodicNeighbor): neighbor of the central atom
+        """
+        for j, cluster in enumerate(self.all_clusters[i].values()):
+            if neighbor in cluster:
+                return j
+
+        return None
 
     def get_total_energy_prefactors_for_pandas_table(self):
         # loop over all sites
