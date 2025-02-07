@@ -17,8 +17,7 @@ class StructureJ(Structure):
     
     def initialize(self, magnetic_atoms=None, discard_nonmagnetic_atoms=None, magnetic_supercell=None, 
                    show_supercell=None, supercell_out_name=None, Heisenberg_Hamiltonian_type=None, 
-                   magnetic_moments=None, neighbor_cutoff=None, round_decimals=None, 
-                   keep_only_first_unique_NN_label_combo=True):
+                   magnetic_moments=None, neighbor_cutoff=None, round_decimals=None):
         """Ideally this would be part of __init__ but there seems to be problem with overriding the 
             pymatgen's .from_file() constructor. So, this is a workaround.
 
@@ -38,10 +37,10 @@ class StructureJ(Structure):
         if magnetic_moments: self.magnetic_moments = magnetic_moments
         if neighbor_cutoff: self.neighbor_cutoff = neighbor_cutoff
         if round_decimals: self.round_decimals = round_decimals
+        # symmetry analysis must be done before removing nonmagnetic atoms - they influence the symmetry in any case!!
+        self.symmetry_analysis()
         if discard_nonmagnetic_atoms: self.remove_nonmagnetic_atoms()
-        self.keep_only_first_unique_NN_label_combo = keep_only_first_unique_NN_label_combo
         if Heisenberg_Hamiltonian_type: self.define_Heisenberg_Hamiltonian(type=Heisenberg_Hamiltonian_type)
-
         print('self before making the supercell', self)
         self.make_supercell()
         print('self after making the supercell', self)
@@ -52,7 +51,14 @@ class StructureJ(Structure):
         self.neighbors_analysis_clustering_custom_made()
 
         self.do_pandas_magic()
-        
+
+    def symmetry_analysis(self):
+        # get space group and point group
+        sga = SpacegroupAnalyzer(self)
+        # save space group symbol and point group symbol, also point group object
+        self.sg_symbol = sga.get_space_group_symbol()
+        self.pg_symbol =  sga.get_point_group_symbol()
+        self.pg = PointGroup(self.pg_symbol)  
 
     def update_magnetic_moments(self, magnetic_moments):
         """Update magnetic moments before running 'get_total_energy()' method.
@@ -107,14 +113,12 @@ class StructureJ(Structure):
         self.N_neighbors_up_to_cutoff = len(self.all_neighbors_for_all_sites[0])
   
         # ==== DERIVED ATTRIBUTES ====
-        self.all_neighbors_coords = self.get_neighbors_attribute('coords')
-        self.all_neighbors_rij = np.array([np.concatenate(self.all_neighbors_coords[i,:], axis=0).reshape(-1,3) - self[i].coords for i in range(self.N_atoms_in_magnetic_unit_cell)])
+        self.all_neighbors_coords = self.get_neighbors_coords()
+        self.all_neighbors_rij = np.array([self.all_neighbors_coords[i] - self[i].coords for i in range(self.N_atoms_in_magnetic_unit_cell)])
         self.all_neighbors_distances = self.get_all_neighbors_distances()
         self.all_neighbors_NN = np.array([nn_order_from_distances(self.all_neighbors_distances[i,:], round_decimals=self.round_decimals) for i in range(self.N_atoms_in_magnetic_unit_cell)])
-        # self.all_neighbors_NN_multiplicity = np.array([count_nn_order_neighbors(self.all_neighbors_NN[i,:]) for i in range(self.N_atoms_in_magnetic_unit_cell)])
 
         print('all_neighbors_NN:', self.all_neighbors_NN)
-        # print('all_neighbors_NN_multiplicity:', self.all_neighbors_NN_multiplicity)
 
         self.center_atom_labels = self.get_center_atom_attribute('species_string')
         self.all_neighbors_labels = self.get_neighbors_attribute('species_string')
@@ -123,6 +127,17 @@ class StructureJ(Structure):
 
         self.center_atom_index = self.get_center_atom_index()
         self.all_neighbors_index = self.get_neighbors_attribute('index')
+
+    def get_neighbors_coords(self):
+        """Get an array of coordinates from the all_neighbors_for_all_sites array.
+
+        Returns:
+            list of numpy ndarrays: for each site in the magnetic unit cell, an array (N_neighbors, 3) of coordinates of neighbors
+        """
+        coords_neat = []
+        for coords_list in self.get_neighbors_attribute('coords'):
+            coords_neat.append(np.stack(coords_list, axis=0))
+        return coords_neat
 
     def get_cluster_index_for_all(self):
         """Create an array of type 'all_neighbors' with the cluster index for each neighbor.
@@ -142,7 +157,7 @@ class StructureJ(Structure):
                 for j in cluster:
                     self.all_neighbors_cluster_index[i,j] = cluster_idx
 
-    def do_pandas_magic(self, order_by_NN_increasingly=True):
+    def do_pandas_magic(self, order_by_NN_increasingly=False, verbose=False):
         # ==== PANDAS TABLE OF TWO-SITE INTERACTIONS ====
         self.two_site_interaction_table = pd.DataFrame()
         data = [array2D.flatten() for array2D in [self.center_atom_index, self.center_atom_labels, self.all_neighbors_index, self.all_neighbors_labels, self.all_neighbors_images, self.all_neighbors_distances, self.all_neighbors_NN, self.all_neighbors_cluster_index]]
@@ -154,64 +169,24 @@ class StructureJ(Structure):
 
         self.aggregate_pandas_table()
 
-        print('Two-site interaction table:\n', self.two_site_interaction_table)
+        if verbose:
+            print('Two-site interaction table:\n', self.two_site_interaction_table)
+            print('------------ data:', self.center_atom_labels[0,0])
 
-        print('------------ data:', self.center_atom_labels[0,0])
-        # order neighbors by NN order
-        if order_by_NN_increasingly:
-            self.order_all_arrays_by_NN_increasingly()
+    # !!!!! DO NOT USE THE BELOW - IF YOU FORGET TO ORDER SOME ARRAYS THERE WILL BE HARD-TO-FIND BUGS !!!!!
+    # def order_all_arrays_by_NN_increasingly(self):
+    #     """Order all arrays by NN order.
+    #     """
+    #     # get ordering indeces
+    #     # !!!!!! add secondary ordering by site label !!!!!
+    #     self.all_neighbors_order = np.argsort(self.all_neighbors_NN, axis=1)
 
-        # create the multiplicity array: by default this is just an array of 1, unless they are grouped 
-        #   as for instance in the  keep_only_first_unique_NNorder_label_combo_neighbor()  method where
-        #   the multiplicity will be overwritten
-        self.all_neighbors_NN_multiplicity = np.ones((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=np.int32)
-
-        # keep only first of the unique NN order neighbors
-        if self.keep_only_first_unique_NN_label_combo:
-            self.keep_only_first_unique_NNorder_label_combo_neighbor()
-
-    def order_all_arrays_by_NN_increasingly(self):
-        """Order all arrays by NN order.
-        """
-        # get ordering indeces
-        # !!!!!! add secondary ordering by site label !!!!!
-        self.all_neighbors_order = np.argsort(self.all_neighbors_NN, axis=1)
-
-        # order all arrays (first is list of lists, rest are numpy arrays)
-        self.all_neighbors_for_all_sites = [[row[ind] for ind in self.all_neighbors_order[i]] for i, row in enumerate(self.all_neighbors_for_all_sites)]
-        self.all_neighbors_coords = np.take_along_axis(self.all_neighbors_coords, self.all_neighbors_order, axis=1)
-        self.all_neighbors_distances = np.take_along_axis(self.all_neighbors_distances, self.all_neighbors_order, axis=1)
-        self.all_neighbors_NN = np.take_along_axis(self.all_neighbors_NN, self.all_neighbors_order, axis=1)
-        self.all_neighbors_labels = np.take_along_axis(self.all_neighbors_labels, self.all_neighbors_order, axis=1)
-
-    def keep_only_first_unique_NNorder_label_combo_neighbor(self):
-        """Keep only the first unique term of the given NN-site_label combination.
-        """
-        # copy the neighbors array to keep the original
-        self.all_neighbors_for_all_sites_original = copy(self.all_neighbors_for_all_sites)
-        # array of tuples of (order, label) for each site
-        # [N_atoms_in_magnetic_unit_cell, N_neighbors] array of tuples (NN, label)
-        self.all_neighbors_NNorder_label_combo = [[(self.all_neighbors_NN[i,j], self.all_neighbors_labels[i,j]) for j in range(self.N_neighbors_up_to_cutoff)] for i in range(self.N_atoms_in_magnetic_unit_cell)]
-
-        # get unique NN orders and labels
-        self.all_neighbors_NNorder_label_combo_unique_idx = np.array([np.unique(row, axis=0, return_index=True)[1] for row in self.all_neighbors_NNorder_label_combo])
-
-        # get their number of appearances
-        multiplicity = []
-        len_character_tuple = len(self.all_neighbors_NNorder_label_combo[0][0])
-        for i in range(self.N_atoms_in_magnetic_unit_cell):
-            multiplicity.append([])
-            for unique_combo_idx in self.all_neighbors_NNorder_label_combo_unique_idx[i,:]:
-                mult_i = int(np.sum(np.sum(np.array(self.all_neighbors_NNorder_label_combo[i]) == self.all_neighbors_NNorder_label_combo[i][unique_combo_idx], axis=1) == len_character_tuple))
-                multiplicity[i].append(mult_i)
-        self.all_neighbors_NNorder_label_combo_unique_multiplicity = np.array(multiplicity)
-        
-        # keep only the first unique NN order neighbor
-        self.all_neighbors_for_all_sites = [[self.all_neighbors_for_all_sites[i][j] for j in self.all_neighbors_NNorder_label_combo_unique_idx[i]] for i in range(self.N_atoms_in_magnetic_unit_cell)]
-        self.all_neighbors_coords = np.array([self.all_neighbors_coords[i][self.all_neighbors_NNorder_label_combo_unique_idx[i]] for i in range(self.N_atoms_in_magnetic_unit_cell)])
-        self.all_neighbors_distances = np.array([self.all_neighbors_distances[i][self.all_neighbors_NNorder_label_combo_unique_idx[i]] for i in range(self.N_atoms_in_magnetic_unit_cell)])
-        self.all_neighbors_NN = np.array([self.all_neighbors_NN[i][self.all_neighbors_NNorder_label_combo_unique_idx[i]] for i in range(self.N_atoms_in_magnetic_unit_cell)])
-        self.all_neighbors_labels = np.array([self.all_neighbors_labels[i][self.all_neighbors_NNorder_label_combo_unique_idx[i]] for i in range(self.N_atoms_in_magnetic_unit_cell)])
+    #     # order all arrays (first is list of lists, rest are numpy arrays)
+    #     self.all_neighbors_for_all_sites = [[row[ind] for ind in self.all_neighbors_order[i]] for i, row in enumerate(self.all_neighbors_for_all_sites)]
+    #     self.all_neighbors_coords = np.take_along_axis(self.all_neighbors_coords, self.all_neighbors_order, axis=1)
+    #     self.all_neighbors_distances = np.take_along_axis(self.all_neighbors_distances, self.all_neighbors_order, axis=1)
+    #     self.all_neighbors_NN = np.take_along_axis(self.all_neighbors_NN, self.all_neighbors_order, axis=1)
+    #     self.all_neighbors_labels = np.take_along_axis(self.all_neighbors_labels, self.all_neighbors_order, axis=1)
 
     def get_neighbors_attribute(self, attribute):
         """Generic method to get an array of attributes from the all_neighbors_for_all_sites array.
@@ -267,14 +242,13 @@ class StructureJ(Structure):
             np.array: 2D array of distances of all_neighbors_for_all_sites
         """
         if not hasattr(self, 'all_neighbors_coords'):
-            self.all_neighbors_coords = self.get_neighbors_attribute('coords')
+            self.all_neighbors_coords = self.get_neighbors_coords()
 
         # for all the coords subtract the coords of the site, then run np.linalg.norm
         all_neighbors_distances = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=np.float64)
 
         for i in range(self.N_atoms_in_magnetic_unit_cell):
-            for j in range(self.N_neighbors_up_to_cutoff):
-                all_neighbors_distances[i,j] = np.linalg.norm(self.all_neighbors_coords[i,j] - self[i].coords)
+            all_neighbors_distances[i,:] = np.linalg.norm(self.all_neighbors_coords[i] - self[i].coords, axis=1)
         return all_neighbors_distances
 
     def get_J1_with_phantoms_for_supercell(self, four_state_atoms_indeces=(0,1)):
@@ -298,11 +272,15 @@ class StructureJ(Structure):
         id1_coords = np.array(self[id1].coords)
         all_neighbors_for_id1 = self.all_neighbors_for_all_sites[id1]
 
-        neighbors_of_id1_coords = np.array( [neighbor.coords for neighbor in all_neighbors_for_id1] )
-        neighbors_of_id1_labels = [neighbor.species_string for neighbor in all_neighbors_for_id1]
-        neighbors_of_id1_distances = np.linalg.norm(neighbors_of_id1_coords - id1_coords, axis=1)
-        neighbors_of_id1_nn_order = nn_order_from_distances(neighbors_of_id1_distances, round_decimals=self.round_decimals)
-        neighbors_of_id1_nn_number = count_nn_order_neighbors(neighbors_of_id1_nn_order)
+        neighbors_of_id1_coords = self.all_neighbors_coords[id1]
+        neighbors_of_id1_labels = self.all_neighbors_labels[id1]
+        neighbors_of_id1_distances = self.all_neighbors_distances[id1]
+        neighbors_of_id1_nn_order_old = nn_order_from_distances(neighbors_of_id1_distances, round_decimals=self.round_decimals)
+        neighbors_of_id1_nn_order = self.all_neighbors_cluster_index[id1]
+        print('all_neighbors_cluster_index', self.all_neighbors_cluster_index)
+        print('np.all(neighbors_of_id1_nn_order == 0):', np.all(neighbors_of_id1_nn_order == 0))
+        print('neighbors_of_id1_nn_order:', neighbors_of_id1_nn_order)
+        print('neighbors_nn_order_old:', neighbors_of_id1_nn_order_old)
 
         # neighbor_is_type_id2 = [neighbor.species_string == self[id2].species_string for neighbor in all_neighbors_for_id1]
         id2_coords = self[id2].coords
@@ -326,12 +304,11 @@ class StructureJ(Structure):
         id2_coords = np.array(self[id2].coords)
         all_neighbors_for_id2 = self.all_neighbors_for_all_sites[id2]
 
-        neighbors_of_id2_coords = np.array( [neighbor.coords for neighbor in all_neighbors_for_id2] )
-        neighbors_of_id2_labels = [neighbor.species_string for neighbor in all_neighbors_for_id2]
-        neighbors_of_id2_distances = np.linalg.norm(neighbors_of_id2_coords - id2_coords, axis=1)
-        neighbors_of_id2_nn_order = nn_order_from_distances(neighbors_of_id2_distances, round_decimals=self.round_decimals)
-        neighbors_of_id2_nn_number = count_nn_order_neighbors(neighbors_of_id2_nn_order)
-
+        neighbors_of_id2_coords = np.array(self.all_neighbors_coords[id2])
+        neighbors_of_id2_labels = self.all_neighbors_labels[id2]
+        neighbors_of_id2_distances = self.all_neighbors_distances[id2]
+        neighbors_of_id2_nn_order = self.all_neighbors_cluster_index[id2]
+        
         # neighbor_is_type_id1 = [neighbor.species_string == self[id1].species_string for neighbor in all_neighbors_for_id2]
         id1_coords = self[id1].coords
         neighbor_is_type_id1 = [np.allclose(neighbor.to_unit_cell().coords, id1_coords) for neighbor in all_neighbors_for_id2]
@@ -363,6 +340,7 @@ class StructureJ(Structure):
         neighbors_of_id1_distances_unique = np.sort(np.unique(neighbors_of_id1_distances.round(decimals=self.round_decimals)))
         
         # save the calculated data as object attributes
+        self.four_state_atoms_indeces = four_state_atoms_indeces
         self.id1_coords = id1_coords
         self.neighbors_of_id1_coords = neighbors_of_id1_coords
         self.neighbors_of_id1_nn_order = neighbors_of_id1_nn_order
@@ -494,9 +472,6 @@ class StructureJ(Structure):
             self.get_all_neighbors_multiplicity()
         # !!!!!!!!!
         
-        # !!! don't care for the below multiplicity: will be implemented through pandas !!!
-        #       -----> don't care for this:::  self.all_neighbors_NNorder_label_combo_unique_multiplicity
-        
         self.HH.get_total_energy(self.magnetic_moments, self.all_neighbors_spins, self.all_neighbors_labels, self.all_neighbors_multiplicity)
 
         # --- 3. flatten the output array ----
@@ -556,7 +531,7 @@ class StructureJ(Structure):
         ax.set_title('Spin configuration')
 
         id_coords = self[id_main_atom].coords
-        neighbors_of_id_coords = np.stack(self.all_neighbors_coords[id_main_atom], axis=0)
+        neighbors_of_id_coords = self.all_neighbors_coords[id_main_atom]
         print('type', type(neighbors_of_id_coords))
         print('shape', neighbors_of_id_coords.shape)
         print('neighbors_of_id_coords\n', neighbors_of_id_coords)
@@ -601,13 +576,6 @@ class StructureJ(Structure):
             self.neighbors_of_each_first_equiv_site (list of dicts): Each dict contains the clustering of the neighbors of the first site of the equivalent sites.
         """
 
-        # ==== 1. UNIQUE LABELS ====
-        sga = SpacegroupAnalyzer(self)
-
-        system_symmetrized = sga.get_symmetrized_structure()
-        self.equiv_site_idx = system_symmetrized.equivalent_indices
-        self.N_unique_sites_in_unitcell = len(self.equiv_site_idx)
-
         self.create_labels_for_unique_sites()
 
         if verbose:
@@ -647,15 +615,9 @@ class StructureJ(Structure):
     def neighbors_analysis_clustering_custom_made(self, verbose=False, tol_rec_distance=1e-3):
 
         sga = SpacegroupAnalyzer(self)
-
-        # save space group symbol and point group symbol, also point group object
-        self.sg_symbol = sga.get_space_group_symbol()
-        self.pg_symbol =  sga.get_point_group_symbol()
-        self.pg = PointGroup(self.pg_symbol)
-
         system_symmetrized = sga.get_symmetrized_structure()
         self.equiv_site_idx = system_symmetrized.equivalent_indices
-        self.N_unique_sites_in_unitcell = len(self.equiv_site_idx)
+        self.N_unique_sites_in_unitcell = len(self.equiv_site_idx)  
 
         self.create_labels_for_unique_sites()
 
@@ -779,7 +741,7 @@ class StructureJ(Structure):
                 # change the species to a composition with species 'species_label' and occupancy 1.0
                 self[i].label = species_label
 
-    def get_total_energy_prefactors_for_pandas_table(self):
+    def get_total_energy_prefactors_for_pandas_table(self, verbose=False):
         # loop over all sites
 
         N_two_site_parameters = len(self.HH.two_site_parameters)
@@ -788,17 +750,17 @@ class StructureJ(Structure):
         parameter_prefactors = np.zeros((N_pairs, N_two_site_parameters), dtype=np.float64)
 
         for i,row in self.two_site_interaction_table.iterrows():
-            print('row', row)
-            print("row['center_atom_index']", row['center_atom_index'])
-            print("type(row['center_atom_index'])", type(row['center_atom_index']))
-
+            if verbose:    
+                print('row', row)
+                print("row['center_atom_index']", row['center_atom_index'])
+                print("type(row['center_atom_index'])", type(row['center_atom_index']))
             # get the two-site parameters for all pairs
             parameter_prefactors[i,:] = self.HH.two_site_energy(self.magnetic_moments[row['center_atom_index']], self.magnetic_moments[row['neighbor_index']])
 
         for i, parameter in enumerate(self.HH.two_site_parameters):
             self.two_site_interaction_table[parameter] = parameter_prefactors[:,i]
 
-    def aggregate_pandas_table(self):
+    def aggregate_pandas_table(self, verbose=True):
         # group by 'center_atom_index', secondarily by 'neighbor_index' and tertiary by 'cluster_index'
         # then sum all J and D
         table_grouped = self.two_site_interaction_table.groupby(['center_atom_label', 'neighbor_label', 'cluster_index'])
@@ -807,5 +769,6 @@ class StructureJ(Structure):
         table_grouped = table_grouped.agg({'distance': 'first', 'J': 'sum', 'D': 'sum'})
         self.table_grouped = table_grouped
 
-        print('TABLE SUMMED')
-        print(table_grouped)
+        if verbose:
+            print('TABLE SUMMED')
+            print(table_grouped)

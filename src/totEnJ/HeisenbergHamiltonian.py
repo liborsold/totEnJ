@@ -27,7 +27,7 @@ class HeisenbergHamiltonian:
                 spin1 = np.array(spin1)
                 spin2 = np.array(spin2)
                 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! check expression for DMI 
-                return [np.dot(spin1, spin2), np.sum(np.cross(spin1, spin2))]
+                return [0.5*np.dot(spin1, spin2), np.sum(np.cross(spin1, spin2))]
             self.two_site_energy = two_site_parameter_prefactors
 
         elif type == 'XXZ':

@@ -10,7 +10,6 @@ def main():
     # supercell = (2, 2, 1)
     supercells = [(2,1,1),]
 
-
     M_all = []
     states_all = []
     equivalent_states_all = []
