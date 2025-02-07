@@ -136,14 +136,12 @@ class StructureJ(Structure):
         """
         coords_neat = []
         for i, coords_list in enumerate(self.get_neighbors_attribute('coords')):
-            print('i', i)
-            print('coords_list', coords_list)
             try:
-                a = np.stack(coords_list, axis=0)
+                coords_list_np_ndarray = np.stack(coords_list, axis=0)
             except ValueError:
                 raise Exception("Some of the neighbors (furhest ones probably) give '.coords' as 0.\n\n============>    TRY INCREASING THE NEIGHBOR_CUTOFF DISTANCE FROM THE VERY BEGINNING     <============\n\nAborting.")
 
-            coords_neat.append(a)
+            coords_neat.append(coords_list_np_ndarray)
         return coords_neat
 
     def get_cluster_index_for_all(self):
@@ -164,14 +162,16 @@ class StructureJ(Structure):
                 for j in cluster:
                     self.all_neighbors_cluster_index[i,j] = cluster_idx
 
-    def do_pandas_magic(self, order_by_NN_increasingly=False, verbose=False):
+    def do_pandas_magic(self, verbose=False):
         # ==== PANDAS TABLE OF TWO-SITE INTERACTIONS ====
         self.two_site_interaction_table = pd.DataFrame()
         data = [array2D.flatten() for array2D in [self.center_atom_index, self.center_atom_labels, self.all_neighbors_index, self.all_neighbors_labels, self.all_neighbors_images, self.all_neighbors_distances, self.all_neighbors_NN, self.all_neighbors_cluster_index]]
         column_names = ['center_atom_index', 'center_atom_label', 'neighbor_index', 'neighbor_label', 'neighbor_image', 'distance', 'NN_order', 'cluster_index']
         for i, name in enumerate(column_names):
             self.two_site_interaction_table[name] = data[i]
-
+            
+        all_neighbors_rij_list = [self.all_neighbors_rij[i][j] for i in range(len(self.all_neighbors_rij)) for j in range(len(self.all_neighbors_rij[i]))]
+        self.two_site_interaction_table['r_ij'] = all_neighbors_rij_list
         self.get_total_energy_prefactors_for_pandas_table()
 
         self.aggregate_pandas_table()
@@ -282,12 +282,8 @@ class StructureJ(Structure):
         neighbors_of_id1_coords = self.all_neighbors_coords[id1]
         neighbors_of_id1_labels = self.all_neighbors_labels[id1]
         neighbors_of_id1_distances = self.all_neighbors_distances[id1]
-        neighbors_of_id1_nn_order_old = nn_order_from_distances(neighbors_of_id1_distances, round_decimals=self.round_decimals)
         neighbors_of_id1_nn_order = self.all_neighbors_cluster_index[id1]
-        print('all_neighbors_cluster_index', self.all_neighbors_cluster_index)
-        print('np.all(neighbors_of_id1_nn_order == 0):', np.all(neighbors_of_id1_nn_order == 0))
-        print('neighbors_of_id1_nn_order:', neighbors_of_id1_nn_order)
-        print('neighbors_nn_order_old:', neighbors_of_id1_nn_order_old)
+        neighbors_of_id1_nn_number = count_nn_order_neighbors(neighbors_of_id1_nn_order)
 
         # neighbor_is_type_id2 = [neighbor.species_string == self[id2].species_string for neighbor in all_neighbors_for_id1]
         id2_coords = self[id2].coords
