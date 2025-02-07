@@ -135,8 +135,15 @@ class StructureJ(Structure):
             list of numpy ndarrays: for each site in the magnetic unit cell, an array (N_neighbors, 3) of coordinates of neighbors
         """
         coords_neat = []
-        for coords_list in self.get_neighbors_attribute('coords'):
-            coords_neat.append(np.stack(coords_list, axis=0))
+        for i, coords_list in enumerate(self.get_neighbors_attribute('coords')):
+            print('i', i)
+            print('coords_list', coords_list)
+            try:
+                a = np.stack(coords_list, axis=0)
+            except ValueError:
+                raise Exception("Some of the neighbors (furhest ones probably) give '.coords' as 0.\n\n============>    TRY INCREASING THE NEIGHBOR_CUTOFF DISTANCE FROM THE VERY BEGINNING     <============\n\nAborting.")
+
+            coords_neat.append(a)
         return coords_neat
 
     def get_cluster_index_for_all(self):
