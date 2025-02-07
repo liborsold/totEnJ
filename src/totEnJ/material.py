@@ -1,4 +1,5 @@
 from pymatgen.core import Lattice, Structure, Molecule, PeriodicNeighbor, Composition
+from pymatgen.symmetry.groups import PointGroup
 from pymatgen.symmetry.analyzer import PointGroupAnalyzer, cluster_sites, SpacegroupAnalyzer
 from pymatgen.vis.structure_vtk import StructureVis
 from os.path import exists
@@ -46,9 +47,11 @@ class StructureJ(Structure):
         print('self after making the supercell', self)
         if show_supercell: self.show_supercell_now()
 
-        self.neighbors_analysis_clustering()
-
         self.neighbors_analysis()
+
+        self.neighbors_analysis_clustering_custom_made()
+
+        self.do_pandas_magic()
         
 
     def update_magnetic_moments(self, magnetic_moments):
@@ -87,14 +90,15 @@ class StructureJ(Structure):
         visualizer.set_structure(vis_structure)
         visualizer.show()
 
-    def neighbors_analysis(self, order_by_NN_increasingly=True):
+    def neighbors_analysis(self):
         """Analyze neighbors for each site in the magnetic unit cell.
             Calculate their distances from the given site, their order, and the number of neighbors of each order.
         
             Will be automatically run before the dependent methods: get_J1_with_phantoms_for_supercell(), get_total_energy()
         """
+
         # pymatgen's neighbor search:
-                # find neighbors: neighbors is a list (for each site in the unit cell) of list of PeriodicNeighbor objects ... https://pymatgen.org/pymatgen.core.html#pymatgen.core.structure.PeriodicNeighbor
+        # find neighbors: neighbors is a list (for each site in the unit cell) of list of PeriodicNeighbor objects ... https://pymatgen.org/pymatgen.core.html#pymatgen.core.structure.PeriodicNeighbor
             # the return type is a [(site, distance) …]
         self.all_neighbors_for_all_sites = self.get_all_neighbors(self.neighbor_cutoff)
 
@@ -104,6 +108,7 @@ class StructureJ(Structure):
   
         # ==== DERIVED ATTRIBUTES ====
         self.all_neighbors_coords = self.get_neighbors_attribute('coords')
+        self.all_neighbors_rij = np.array([np.concatenate(self.all_neighbors_coords[i,:], axis=0).reshape(-1,3) - self[i].coords for i in range(self.N_atoms_in_magnetic_unit_cell)])
         self.all_neighbors_distances = self.get_all_neighbors_distances()
         self.all_neighbors_NN = np.array([nn_order_from_distances(self.all_neighbors_distances[i,:], round_decimals=self.round_decimals) for i in range(self.N_atoms_in_magnetic_unit_cell)])
         # self.all_neighbors_NN_multiplicity = np.array([count_nn_order_neighbors(self.all_neighbors_NN[i,:]) for i in range(self.N_atoms_in_magnetic_unit_cell)])
@@ -111,24 +116,37 @@ class StructureJ(Structure):
         print('all_neighbors_NN:', self.all_neighbors_NN)
         # print('all_neighbors_NN_multiplicity:', self.all_neighbors_NN_multiplicity)
 
-        self.center_atom_labels = self.get_center_atom_attribute('label')
-        self.all_neighbors_labels = self.get_neighbors_attribute('label')
+        self.center_atom_labels = self.get_center_atom_attribute('species_string')
+        self.all_neighbors_labels = self.get_neighbors_attribute('species_string')
 
         self.all_neighbors_images = self.get_neighbors_attribute('image')
 
         self.center_atom_index = self.get_center_atom_index()
         self.all_neighbors_index = self.get_neighbors_attribute('index')
 
+    def get_cluster_index_for_all(self):
+        """Create an array of type 'all_neighbors' with the cluster index for each neighbor.
+            The cluster index is ascending (1-based) and grouped by chemical element (i.e., two 
+                    neighbors of the same atom will can have the same index if they have a different
+                    site label.
+
+            Saves:
+                self.all_neighbors_cluster_index (np.array): 2D array of cluster indeces for each neighbor for all atoms
+        """
         # cluster index for all neighbors
         self.all_neighbors_cluster_index = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=np.int32)
-        for i, row in enumerate(self.all_neighbors_for_all_sites):
-            for j, neighbor in enumerate(row):
-                self.all_neighbors_cluster_index[i,j] = self.get_cluster_index(i, neighbor)
+        # sweep over clusters
+        for i in range(self.N_atoms_in_magnetic_unit_cell):
+            for i_cluster, cluster in enumerate(self.all_clusters[i]):
+                cluster_idx = self.all_clusters_idx_by_dist_chem_grouped[i][i_cluster]
+                for j in cluster:
+                    self.all_neighbors_cluster_index[i,j] = cluster_idx
 
+    def do_pandas_magic(self, order_by_NN_increasingly=True):
         # ==== PANDAS TABLE OF TWO-SITE INTERACTIONS ====
         self.two_site_interaction_table = pd.DataFrame()
-        data = [self.center_atom_index.flatten(), self.center_atom_labels.flatten(), self.all_neighbors_index.flatten(), self.all_neighbors_labels.flatten(), self.all_neighbors_images.flatten(), self.all_neighbors_distances.flatten(), self.all_neighbors_NN.flatten()]
-        column_names = ['center_atom_index', 'center_atom_label', 'neighbor_index', 'neighbor_label', 'neighbor_image', 'distance', 'NN_order']
+        data = [array2D.flatten() for array2D in [self.center_atom_index, self.center_atom_labels, self.all_neighbors_index, self.all_neighbors_labels, self.all_neighbors_images, self.all_neighbors_distances, self.all_neighbors_NN, self.all_neighbors_cluster_index]]
+        column_names = ['center_atom_index', 'center_atom_label', 'neighbor_index', 'neighbor_label', 'neighbor_image', 'distance', 'NN_order', 'cluster_index']
         for i, name in enumerate(column_names):
             self.two_site_interaction_table[name] = data[i]
 
@@ -139,8 +157,6 @@ class StructureJ(Structure):
         print('Two-site interaction table:\n', self.two_site_interaction_table)
 
         print('------------ data:', self.center_atom_labels[0,0])
-
-
         # order neighbors by NN order
         if order_by_NN_increasingly:
             self.order_all_arrays_by_NN_increasingly()
@@ -234,7 +250,7 @@ class StructureJ(Structure):
             for j, obj in enumerate(row):
                 # for all j it is identical, because here we only care about i - the center atom
                 array_of_attributes[i,j] = getattr(self[i], attribute)
-        return array_of_attributes
+        return array_of_attributes        
     
     def get_center_atom_index(self):
         """Get the index of the center atom for each neighbor.
@@ -587,6 +603,7 @@ class StructureJ(Structure):
 
         # ==== 1. UNIQUE LABELS ====
         sga = SpacegroupAnalyzer(self)
+
         system_symmetrized = sga.get_symmetrized_structure()
         self.equiv_site_idx = system_symmetrized.equivalent_indices
         self.N_unique_sites_in_unitcell = len(self.equiv_site_idx)
@@ -603,7 +620,7 @@ class StructureJ(Structure):
         for i in range(len(self)):
 
             # get neighbors for the first site of the equivalent sites
-            neighbors_i = self.get_neighbors(self[i], self.neighbor_cutoff, )
+            neighbors_i = self.all_neighbors_for_all_sites[i]
 
             # get the point group of neighbors of atom i
             molecule_i = Molecule.from_sites(neighbors_i)
@@ -611,7 +628,7 @@ class StructureJ(Structure):
 
             if verbose: 
                 print(pga.sch_symbol) # show the point group
-                print(molecule_i.center_of_mass) # show the point group's center
+                print(molecule_i.center_of_mass) # show the point group's center - should be very close to self[i].coords
 
             # cluster atoms
             cluster_i = cluster_sites(molecule_i, 10**(-self.round_decimals))
@@ -625,6 +642,117 @@ class StructureJ(Structure):
                 print(cluster_i[0])
                 for key, cluster in cluster_i[1].items():
                     print(len(cluster), key, cluster)
+
+
+    def neighbors_analysis_clustering_custom_made(self, verbose=False, tol_rec_distance=1e-3):
+
+        sga = SpacegroupAnalyzer(self)
+
+        # save space group symbol and point group symbol, also point group object
+        self.sg_symbol = sga.get_space_group_symbol()
+        self.pg_symbol =  sga.get_point_group_symbol()
+        self.pg = PointGroup(self.pg_symbol)
+
+        system_symmetrized = sga.get_symmetrized_structure()
+        self.equiv_site_idx = system_symmetrized.equivalent_indices
+        self.N_unique_sites_in_unitcell = len(self.equiv_site_idx)
+
+        self.create_labels_for_unique_sites()
+
+        # ---- create clusters based on their label and orbit ----
+
+        # for each atom get its neighbors
+        #   divide the neighbors depending on site_label
+        #     for each of these subgroups:
+        #           create an array of all their indices
+        #               while there are any indices left:
+        #                     take the first index
+        #                       make its orbit
+        #                           remove all the indices of the orbit from the array
+        #                           add the orbit (--list of indexes) to the list of all orbits of atom[i]
+        #           add the list of all orbits of atom[i] to the list of all clusters of atom[i]
+
+        A = self.lattice.matrix
+        inv_A = np.linalg.inv(A)
+
+        # 3D array of indices: for each atom a list of clusters, where each cluster is a list of indices 
+        all_clusters = []
+        all_clusters_dist = []
+        all_clusters_idx_by_dist_chem_grouped = []
+
+        # for all  atoms in the magnetic unit cell
+        for i in range(len(self)):
+            # list of clusters for atom i
+            clusters_i = []
+            cluster_distances_i = []
+            idx_cluster_by_dist_for_each_chem_i = []
+
+            # get neighbors for the first site of the equivalent sites
+            neighbors_i = self.all_neighbors_for_all_sites[i]
+            rij_i_cart = self.all_neighbors_rij[i]
+            # !!! worth considering to move to init and save rij_i_rec as an attribute
+            rij_i_rec = np.array(rij_i_cart @ inv_A)
+
+            # subgroups based on site_label
+            for l_chem in range(self.N_unique_sites_in_unitcell):
+                l_chem_label = self.labels_of_each_equiv_group[l_chem]
+                # all indices of neighbors of atom i with the same label                
+                chemical_subgroup = list(np.where(self.all_neighbors_labels[i,:] == l_chem_label)[0])
+
+                clusters_i_l_chem = []
+                cluster_dist_i_l_chem = []
+                    # while chemical_subgroup is not empty
+                while len(chemical_subgroup) > 0:
+                    # j is an index for neighbors of atom i
+                    # take the first index
+                    j = chemical_subgroup[0]
+                    # make the orbit of point j
+                    point_rec = rij_i_rec[j]
+                    orbit_of_point_rec = self.pg.get_orbit(point_rec)
+                    # find the indices of all orbit points + index of j
+                    if verbose:
+                        print('lchem_label', l_chem_label)
+                        print('chemical_subgroup', chemical_subgroup)
+                        print('point_rec', point_rec)
+                        print('orbit_of_point_rec', orbit_of_point_rec)
+                    orbit_idx = []
+                    for orbit_member in orbit_of_point_rec:
+                        idx_orbit_member_among_neighbors = np.where(np.sum(np.abs(rij_i_rec - orbit_member), axis=1) < tol_rec_distance)[0]
+                        if idx_orbit_member_among_neighbors.size > 0:
+                            orbit_idx.append(idx_orbit_member_among_neighbors[0])
+                        if verbose:
+                            print('orbit_member', orbit_member)
+                            print('orbit_idx', orbit_idx)
+                    # remove all these indices from chemical_subgroup
+                    for k in orbit_idx:
+                        chemical_subgroup.remove(k)
+                    # add the orbit to the list of all orbits of atom[i]
+                    clusters_i_l_chem.append(orbit_idx)
+
+                # order clusters (and related quantities) by distance from the central atom (for each chemical type individually)
+                distances_i_l_chem = [np.mean(self.all_neighbors_distances[i,j_array]) for j_array in clusters_i_l_chem]    
+                sort_order_i_l_chem = np.argsort(distances_i_l_chem)
+                clusters_i_l_chem = [clusters_i_l_chem[i] for i in sort_order_i_l_chem]
+                distances_i_l_chem = [distances_i_l_chem[i] for i in sort_order_i_l_chem]
+
+                # append the ordered chemical clusters to
+                clusters_i += clusters_i_l_chem
+                cluster_distances_i += distances_i_l_chem
+                # ascending array of {1, 2, ..., N_clusters_i_l_chem} for each chemical type individually
+                idx_cluster_by_dist_for_each_chem_i += [i+1 for i in range(len(clusters_i_l_chem))]
+
+            all_clusters.append(clusters_i)
+            all_clusters_dist.append(cluster_distances_i)
+            all_clusters_idx_by_dist_chem_grouped.append(idx_cluster_by_dist_for_each_chem_i)
+        
+        # list of lists of lists: for each atom, list of clusters, each cluster is a list of indices
+        #   - !! should stay as lists, not numpy arrays: dimensions can differ in clusters
+        self.all_clusters = all_clusters
+        self.all_clusters_dist = all_clusters_dist # mean distance of cluster members from the central atom
+        self.all_clusters_idx_by_dist_chem_grouped = all_clusters_idx_by_dist_chem_grouped # index of the cluster by distance for each chemical type individually
+
+        # which cluster does each neighbor belong to?
+        self.get_cluster_index_for_all()
 
 
     def create_labels_for_unique_sites(self, verbose=True):
@@ -649,20 +777,7 @@ class StructureJ(Structure):
             # label all the equivalent sites with the same label (e.g. Cr1 or Cr2 if more non-equivalent Cr, or simply Cr if only one equivalent Cr group)
             for i in equiv_idx:
                 # change the species to a composition with species 'species_label' and occupancy 1.0
-                self[i].species = Composition({species_label: 1.0})
-
-    def get_cluster_index(self, i, neighbor):
-        """Given the index of the center atom and its neighbor, find the cluster index of the neighbor.
-
-        Args:
-            i (integer): index of the central atom
-            neighbor (PeriodicNeighbor): neighbor of the central atom
-        """
-        for j, cluster in enumerate(self.all_clusters[i].values()):
-            if neighbor in cluster:
-                return j
-
-        return None
+                self[i].label = species_label
 
     def get_total_energy_prefactors_for_pandas_table(self):
         # loop over all sites
@@ -684,12 +799,13 @@ class StructureJ(Structure):
             self.two_site_interaction_table[parameter] = parameter_prefactors[:,i]
 
     def aggregate_pandas_table(self):
-        # group by 'center_atom_index', secondarily by 'neighbor_index' and tertiary by 'NN_order'
+        # group by 'center_atom_index', secondarily by 'neighbor_index' and tertiary by 'cluster_index'
         # then sum all J and D
-        table_grouped = self.two_site_interaction_table.groupby(['center_atom_label', 'neighbor_label', 'NN_order'])
+        table_grouped = self.two_site_interaction_table.groupby(['center_atom_label', 'neighbor_label', 'cluster_index'])
         
         # SUM only J and D
         table_grouped = table_grouped.agg({'distance': 'first', 'J': 'sum', 'D': 'sum'})
+        self.table_grouped = table_grouped
 
         print('TABLE SUMMED')
         print(table_grouped)
