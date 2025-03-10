@@ -17,7 +17,7 @@ def main():
         M, states = coeff_matrix_Jxy_Jz_K(lattice='hexagonal_2D', supercell=supercell, order_NN=5)
         print('Original Equations:')
         print(M)
-        print('\n')        
+        print('\n')
 
         M, unique_rows = unique_rows_in_matrix(M)
         equivalent_rows = equivalent_rows_in_matrix(M)

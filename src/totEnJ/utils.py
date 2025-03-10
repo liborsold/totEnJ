@@ -522,4 +522,5 @@ def leave_only_first_part_with_letters(string):
         else:
             break
     return new_string
+
     

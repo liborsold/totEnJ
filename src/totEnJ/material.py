@@ -10,6 +10,7 @@ from matplotlib.patches import Circle, Polygon
 from totEnJ.utils import nn_order_from_distances, count_nn_order_neighbors, leave_only_first_part_with_letters
 from totEnJ.HeisenbergHamiltonian import HeisenbergHamiltonian
 import pandas as pd
+import warnings
 
 class StructureJ(Structure):
     """Class for the magnetic structure analysis and calculation of the total energy using the Heisenberg Hamiltonian, derived from pymatgen's Structure.
@@ -17,7 +18,8 @@ class StructureJ(Structure):
     
     def initialize(self, magnetic_atoms=None, discard_nonmagnetic_atoms=None, magnetic_supercell=None, 
                    show_supercell=None, supercell_out_name=None, Heisenberg_Hamiltonian_type=None, 
-                   magnetic_moments=None, neighbor_cutoff=None, round_decimals=None):
+                   magnetic_moments=None, neighbor_cutoff=None, round_decimals=None, symprec_group_analyzer=0.01, 
+                   verbose=False):
         """Ideally this would be part of __init__ but there seems to be problem with overriding the 
             pymatgen's .from_file() constructor. So, this is a workaround.
 
@@ -30,6 +32,8 @@ class StructureJ(Structure):
             neighbor_cutoff (float, optional): Radius in Angstrom around each atom within which the neighbors will be considered. Defaults to None.
             round_decimals (integer, optional): to what decimal point should one round the neighbors distance to be considered equal neighbors. E.g., if round_decimals=1 and the two neighbors would be 3.44 and 3.36 Angstrom far, they will be considered equal. Defaults to None.
         """
+        self.symprec_group_analyzer = symprec_group_analyzer
+        
         if magnetic_atoms: self.magnetic_atoms = magnetic_atoms
         if discard_nonmagnetic_atoms: self.discard_nonmagnetic_atoms = discard_nonmagnetic_atoms
         if magnetic_supercell: self.magnetic_supercell = magnetic_supercell
@@ -41,10 +45,12 @@ class StructureJ(Structure):
         self.symmetry_analysis()
         if discard_nonmagnetic_atoms: self.remove_nonmagnetic_atoms()
         if Heisenberg_Hamiltonian_type: self.define_Heisenberg_Hamiltonian(type=Heisenberg_Hamiltonian_type)
-        print('self before making the supercell', self)
+        if verbose: print('self before making the supercell', self)
         self.make_supercell()
-        print('self after making the supercell', self)
+        if verbose: print('self after making the supercell', self)
         if show_supercell: self.show_supercell_now()
+
+        print('NUMBER OF SITES IN SYSTEM', len(self))
 
         self.neighbors_analysis()
 
@@ -54,7 +60,7 @@ class StructureJ(Structure):
 
     def symmetry_analysis(self):
         # get space group and point group
-        sga = SpacegroupAnalyzer(self)
+        sga = SpacegroupAnalyzer(self, symprec=self.symprec_group_analyzer)
         # save space group symbol and point group symbol, also point group object
         self.sg_symbol = sga.get_space_group_symbol()
         self.pg_symbol =  sga.get_point_group_symbol()
@@ -96,29 +102,76 @@ class StructureJ(Structure):
         visualizer.set_structure(vis_structure)
         visualizer.show()
 
-    def neighbors_analysis(self):
+    def masked_array_from_list_of_lists(self, list_of_lists, mask=None):
+        """Create a masked array from a list of lists with inhomogeneous dimensions of the 1D lists.
+
+        Args:
+            list_of_lists (list of lists): List of lists to convert to a masked array.
+
+        Returns:
+            numpy.ma.masked_array: Masked array.
+        """
+        # length of the longest list
+        max_len = max([len(l) for l in list_of_lists])
+        # pad all lists to the same length
+        list_of_lists = [l + [np.nan]*(max_len-len(l)) for l in list_of_lists]
+        # create mask automatically if it was not provided (better to provide a single mask to all calls)
+        if mask is None:
+            mask = self.all_neighbors_mask
+        return np.ma.masked_array(list_of_lists, mask=mask)
+
+    def neighbors_analysis(self, verbose=False):
         """Analyze neighbors for each site in the magnetic unit cell.
             Calculate their distances from the given site, their order, and the number of neighbors of each order.
         
-            Will be automatically run before the dependent methods: get_J1_with_phantoms_for_supercell(), get_total_energy()
+            Will be automatically called before the dependent methods: get_J1_with_phantoms_for_supercell(), get_total_energy()
         """
-
         # pymatgen's neighbor search:
         # find neighbors: neighbors is a list (for each site in the unit cell) of list of PeriodicNeighbor objects ... https://pymatgen.org/pymatgen.core.html#pymatgen.core.structure.PeriodicNeighbor
             # the return type is a [(site, distance) …]
         self.all_neighbors_for_all_sites = self.get_all_neighbors(self.neighbor_cutoff)
 
+        # number of neighbors for each site
+        self.all_neighbors_N_neighbors = []
+        for neighbors in self.all_neighbors_for_all_sites:
+            self.all_neighbors_N_neighbors.append(len(neighbors))
+        if verbose: print('number of neighbors for each site:', self.all_neighbors_N_neighbors)
+
         # dimensions of neighbor matrices
         self.N_atoms_in_magnetic_unit_cell = len(self)
-        self.N_neighbors_up_to_cutoff = len(self.all_neighbors_for_all_sites[0])
+        self.N_neighbors_up_to_cutoff = max(self.all_neighbors_N_neighbors)
   
         # ==== DERIVED ATTRIBUTES ====
+
+        # -- mask -- for the 'masked 2D numpy arrays' with attributes for all neighbors of all sites
+        #    e.g. if all_neighbors_N_neighbors = [3, 4, 2], then the mask will be [[1, 1, 1, 0], [1, 1, 1, 1], [1, 1, 0, 0]]
+        #    to ensure that only the data for really existing are considered
+        self.all_neighbors_mask = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=bool)
+        for i, N_neighbors in enumerate(self.all_neighbors_N_neighbors):
+            self.all_neighbors_mask[i,:N_neighbors] = True
+
         self.all_neighbors_coords = self.get_neighbors_coords()
-        self.all_neighbors_rij = np.array([self.all_neighbors_coords[i] - self[i].coords for i in range(self.N_atoms_in_magnetic_unit_cell)])
+        for i in range(self.N_atoms_in_magnetic_unit_cell):
+            print('self.all_neighbors_coords[i]:', self.all_neighbors_coords[i])
+            print('self[i].coords', self[i].coords)
+            # exit()
+        # self.all_neighbors_rij = np.array([coords - self[i].coords for i in range(self.N_atoms_in_magnetic_unit_cell) for coords in self.all_neighbors_coords[i]])
+        self.all_neighbors_rij = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff, 3), dtype=np.ndarray)
+        for i in range(self.N_atoms_in_magnetic_unit_cell):
+            for j, coords in enumerate(self.all_neighbors_coords[i]):
+                print('i, j', i, j)
+                print('fuck this shit', coords - self[i].coords)
+                self.all_neighbors_rij[i,j] = coords - self[i].coords
+
+                
+        # print('self.all_neighbors_rij', self.all_neighbors_rij)
+        print('good')
         self.all_neighbors_distances = self.get_all_neighbors_distances()
+        print('still good')
         self.all_neighbors_NN = np.array([nn_order_from_distances(self.all_neighbors_distances[i,:], round_decimals=self.round_decimals) for i in range(self.N_atoms_in_magnetic_unit_cell)])
 
-        print('all_neighbors_NN:', self.all_neighbors_NN)
+        if verbose:
+            print('all_neighbors_NN:', self.all_neighbors_NN)
 
         self.center_atom_labels = self.get_center_atom_attribute('species_string')
         self.all_neighbors_labels = self.get_neighbors_attribute('species_string')
@@ -135,9 +188,12 @@ class StructureJ(Structure):
             list of numpy ndarrays: for each site in the magnetic unit cell, an array (N_neighbors, 3) of coordinates of neighbors
         """
         coords_neat = []
+        # print("self.get_neighbors_attribute('coords')", self.get_neighbors_attribute('coords'))
+        # exit()
         for i, coords_list in enumerate(self.get_neighbors_attribute('coords')):
+            N_neighbors = self.all_neighbors_N_neighbors[i]
             try:
-                coords_list_np_ndarray = np.stack(coords_list, axis=0)
+                coords_list_np_ndarray = np.stack(coords_list[N_neighbors-self.N_neighbors_up_to_cutoff:], axis=0)
             except ValueError:
                 raise Exception("Some of the neighbors (furhest ones probably) give '.coords' as 0.\n\n============>    TRY INCREASING THE NEIGHBOR_CUTOFF DISTANCE FROM THE VERY BEGINNING     <============\n\nAborting.")
 
@@ -202,15 +258,25 @@ class StructureJ(Structure):
             attribute (str): name of the attribute to get from the objects
 
         Returns:
-            np.array: 2D array of attributes of all_neighbors_for_all_sites
+            np.ma.masked_array: 2D array of attributes of all_neighbors_for_all_sites masked by 
+                self.all_neighbors_mask (to ensure that only the data for really existing neighbors are considered)
         """
-        typ = type(getattr(self.all_neighbors_for_all_sites[0][0][0], attribute))
+        typ_example = getattr(self.all_neighbors_for_all_sites[0][0][0], attribute)
+        typ = type(typ_example)
+        if typ == np.ndarray:
+            typ_example.fill(-999   )
+        print('typ', typ)
         if typ == str:
             typ = 'U8'
-        array_of_attributes = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=typ)
+        data = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=typ)
+        data.fill(typ_example)
+        # print('data', data)
+        array_of_attributes = np.ma.masked_array(data, 
+                                                    mask=self.all_neighbors_mask)
         for i, row in enumerate(self.all_neighbors_for_all_sites):
             for j, obj in enumerate(row):
                 array_of_attributes[i,j] = getattr(obj, attribute)
+        print('array_of_attributes', array_of_attributes[0,:-6])
         return array_of_attributes
     
     def get_center_atom_attribute(self, attribute):
@@ -227,7 +293,8 @@ class StructureJ(Structure):
         # if typ is string-like
         if typ == str:
             typ = 'U8'
-        array_of_attributes = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=typ)
+        array_of_attributes = np.ma.masked_array(np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=typ),
+                                                    mask=self.all_neighbors_mask)
         for i, row in enumerate(self.all_neighbors_for_all_sites):
             for j, obj in enumerate(row):
                 # for all j it is identical, because here we only care about i - the center atom
@@ -246,20 +313,20 @@ class StructureJ(Structure):
         """Get an array of distances from the all_neighbors_for_all_sites array.
 
         Returns:
-            np.array: 2D array of distances of all_neighbors_for_all_sites
+            np.ma.masked_array: 2D array of distances of all_neighbors_for_all_sites (masked by self.all_neighbors_mask)
         """
         if not hasattr(self, 'all_neighbors_coords'):
             self.all_neighbors_coords = self.get_neighbors_coords()
 
         # for all the coords subtract the coords of the site, then run np.linalg.norm
-        all_neighbors_distances = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=np.float64)
-
+        all_neighbors_distances = np.ma.masked_array(np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=np.float64),
+                                                    mask=self.all_neighbors_mask)
         for i in range(self.N_atoms_in_magnetic_unit_cell):
-            all_neighbors_distances[i,:] = np.linalg.norm(self.all_neighbors_coords[i] - self[i].coords, axis=1)
+            for j in range(self.N_neighbors_up_to_cutoff):
+                all_neighbors_distances[i,j] = np.linalg.norm(self.all_neighbors_rij[i,j])
         return all_neighbors_distances
 
     def get_J1_with_phantoms_for_supercell(self, four_state_atoms_indeces=(0,1)):
-
         # run the neighbors_analysis() method if it hasn't been run yet
         if not hasattr(self, 'all_neighbors_for_all_sites'):
             # !!! YOU WILL PROBABLY HAVE TO SWITCH OFF KEEPING THE FIRST UNIQUE NN LABEL COMBO !!!
@@ -615,7 +682,10 @@ class StructureJ(Structure):
                     print(len(cluster), key, cluster)
 
 
-    def neighbors_analysis_clustering_custom_made(self, verbose=False, tol_rec_distance=1e-3):
+    def neighbors_analysis_clustering_custom_made(self, verbose=False, tol_rec_distance=None):
+
+        if tol_rec_distance is None:
+            tol_rec_distance = self.symprec_group_analyzer
 
         sga = SpacegroupAnalyzer(self)
         system_symmetrized = sga.get_symmetrized_structure()
@@ -690,7 +760,10 @@ class StructureJ(Structure):
                             print('orbit_idx', orbit_idx)
                     # remove all these indices from chemical_subgroup
                     for k in orbit_idx:
-                        chemical_subgroup.remove(k)
+                        try:
+                            chemical_subgroup.remove(k)
+                        except ValueError:
+                            warnings.warn(f"Index {k} from the orbit_idx list {orbit_idx} not able to be removed from the chemical_subgroup list {chemical_subgroup}.\nIndex listed multiple times in {orbit_idx}??")
                     # add the orbit to the list of all orbits of atom[i]
                     clusters_i_l_chem.append(orbit_idx)
 
@@ -720,7 +793,7 @@ class StructureJ(Structure):
         self.get_cluster_index_for_all()
 
 
-    def create_labels_for_unique_sites(self, verbose=True):
+    def create_labels_for_unique_sites(self, verbose=False):
         """CREATE LABELS FOR THE UNIQUE SITES
           1. determine if there are multiple unique site groups for each chemical element
           2. create labels for the unique sites - no index if only one group for given chemical element, added index if multiple
@@ -763,7 +836,7 @@ class StructureJ(Structure):
         for i, parameter in enumerate(self.HH.two_site_parameters):
             self.two_site_interaction_table[parameter] = parameter_prefactors[:,i]
 
-    def aggregate_pandas_table(self, verbose=True):
+    def aggregate_pandas_table(self, verbose=False):
         # group by 'center_atom_index', secondarily by 'neighbor_index' and tertiary by 'cluster_index'
         # then sum all J and D
         table_grouped = self.two_site_interaction_table.groupby(['center_atom_label', 'neighbor_label', 'cluster_index'])
