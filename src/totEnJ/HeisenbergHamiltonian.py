@@ -1,11 +1,12 @@
 import numpy as np
+from math import factorial
 
 class HeisenbergHamiltonian:
     """The Heisenberg magnetic interactions will be fully defined by this model.
     The object will hold a symbolic vector of all the free parameters (ground-state energy E0, (anisotropic) exchange interactions, single-site anisotropy, DMI constants)
     Given two spins, the model will return a vector of prefactors for all these parameters.  
     """
-    def __init__(self, type='scalar'):
+    def __init__(self, types_n_body={1:'scalar', 2:'scalar', 3:None}):
         """Define what the 'energy' looks like.
 
         Args:
@@ -17,44 +18,64 @@ class HeisenbergHamiltonian:
         Returns:
             list of floats: a vector of prefactors of the Hamiltonian parameters between two interacting spins.
         """
-        self.type = type
+        self.types_n_body = types_n_body
 
-        available_types = ['scalar', 'XXZ', 'tensorial']
+        type_1_body = self.types_n_body[1]
+        type_2_body = self.types_n_body[2]
+        type_3_body = self.types_n_body[3]
 
-        if type == 'scalar':
-            self.two_site_parameters = ['J', 'D']
-            def two_site_parameter_prefactors(spin1=(1,0,0), spin2=(1,0,0)):
-                spin1 = np.array(spin1)
-                spin2 = np.array(spin2)
-                # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! check expression for DMI 
-                return [0.5*np.dot(spin1, spin2), np.sum(np.cross(spin1, spin2))]
-            self.two_site_energy = two_site_parameter_prefactors
+        if type_1_body is not None:
+            if type_1_body == 'scalar':
+                self.single_site_parameters = ['K']
+                def single_site_parameter_prefactors(spin=(1,0,0)):
+                    spin = np.array(spin)
+                    return [spin[2]**2-spin[0]**2-spin[1]**2]
+                self.single_site_energy = single_site_parameter_prefactors
+            else:
+                raise ValueError(f'Undefined type of 1-body Hamiltonian.')
 
-        elif type == 'XXZ':
-            self.two_site_parameters = ['J_xx/yy', 'J_zz', 'D_x/y', 'D_z']
-            def two_site_parameter_prefactors(spin1=(1,0,0), spin2=(1,0,0)):
-                spin1 = np.array(spin1)
-                spin2 = np.array(spin2)
-                D_xyz = np.cross(spin1, spin2)
-                return [(spin1[0]*spin2[0]+spin1[1]*spin2[1])/2, spin1[2]*spin2[2], (D_xyz[0]+D_xyz[1])/2, D_xyz[2]]
-            self.two_site_energy = two_site_parameter_prefactors
+        if type_2_body is not None:
+            if type_2_body == 'scalar':
+                self.two_site_parameters = ['J', 'D']
+                def two_site_parameter_prefactors(spin1=(1,0,0), spin2=(1,0,0)):
+                    spin1 = np.array(spin1)
+                    spin2 = np.array(spin2)
+                    # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! check expression for DMI 
+                    return [0.5*np.dot(spin1, spin2), np.sum(np.cross(spin1, spin2))]
+                self.two_site_energy = two_site_parameter_prefactors
 
-        elif type == 'tensorial':
-            self.two_site_parameters = ['J_xx', 'J_xy', 'J_xz', 'J_yx', 'J_yy', 'J_yz', 'J_zx', 'J_zy', 'J_zz', 'D_x', 'D_y', 'D_z']
-            def two_site_parameter_prefactors(spin1=(1,0,0), spin2=(1,0,0)):
-                spin1 = np.array(spin1)
-                spin2 = np.array(spin2)
-                return [spin1[0]*spin2[0], spin1[0]*spin2[1], spin1[0]*spin2[2], spin1[1]*spin2[0], spin1[1]*spin2[1], spin1[1]*spin2[2], spin1[2]*spin2[0], spin1[2]*spin2[1], spin1[2]*spin2[2], *np.cross(spin1, spin2)]
-            self.two_site_energy = two_site_parameter_prefactors
+            elif type_2_body == 'XXZ':
+                self.two_site_parameters = ['J_xx/yy', 'J_zz', 'D_x/y', 'D_z']
+                def two_site_parameter_prefactors(spin1=(1,0,0), spin2=(1,0,0)):
+                    spin1 = np.array(spin1)
+                    spin2 = np.array(spin2)
+                    D_xyz = np.cross(spin1, spin2)
+                    return [(spin1[0]*spin2[0]+spin1[1]*spin2[1])/2, spin1[2]*spin2[2], (D_xyz[0]+D_xyz[1])/2, D_xyz[2]]
+                self.two_site_energy = two_site_parameter_prefactors
 
-        else:
-            raise ValueError(f'Invalid type of Hamiltonian. Please choose from {', '.join(available_types)}.')
-        
-        self.single_site_parameters = ['K']
-        def single_site_parameter_prefactors(spin=(1,0,0)):
-            spin = np.array(spin)
-            return [spin[2]**2-spin[0]**2-spin[1]**2]
-        self.single_site_energy = single_site_parameter_prefactors
+            elif type_2_body == 'tensorial':
+                self.two_site_parameters = ['J_xx', 'J_xy', 'J_xz', 'J_yx', 'J_yy', 'J_yz', 'J_zx', 'J_zy', 'J_zz', 'D_x', 'D_y', 'D_z']
+                def two_site_parameter_prefactors(spin1=(1,0,0), spin2=(1,0,0)):
+                    spin1 = np.array(spin1)
+                    spin2 = np.array(spin2)
+                    return [spin1[0]*spin2[0], spin1[0]*spin2[1], spin1[0]*spin2[2], spin1[1]*spin2[0], spin1[1]*spin2[1], spin1[1]*spin2[2], spin1[2]*spin2[0], spin1[2]*spin2[1], spin1[2]*spin2[2], *np.cross(spin1, spin2)]
+                self.two_site_energy = two_site_parameter_prefactors
+
+            else:
+                raise ValueError(f'Undefined type of 2-body Hamiltonian.')
+
+        if type_3_body is not None:
+            if type_3_body == 'scalar':
+                self.three_site_parameters = ['J']
+                def three_site_parameter_prefactors(spin1=(1,0,0), spin2=(1,0,0), spin3=(1,0,0)):
+                    spin1 = np.array(spin1)
+                    spin2 = np.array(spin2)
+                    spin3 = np.array(spin3)
+                    return [1/factorial(3)*np.dot(spin1, spin2)*np.dot(spin2, spin3)/(np.linalg.norm(spin1)*np.linalg.norm(spin2)*np.linalg.norm(spin3))] 
+                self.three_site_energy = three_site_parameter_prefactors
+
+            else:
+                raise ValueError(f'Undefined type of 3-body Hamiltonian.')
 
     def __str__(self):
         return f'Heisenberg Hamiltonian with {self.type} interactions: the two-site parameters are {self.two_site_parameters.join(', ')}.'
@@ -65,7 +86,7 @@ class HeisenbergHamiltonian:
     def print_two_site_energy(self, spin1=(1,0,0), spin2=(1,0,0)):
         print(f'The two-site energy prefactors are {self.energy(spin1, spin2).join(', ')}.')
 
-    def get_total_energy(self, magnetic_moments, site_spins, site_labels, site_multiplicity, 
+    def get_total_energy(self, magnetic_moments, site_spins, site_labels, site_multiplicity, site_index=None,
                          verbose=False):
         """
         Return an array structured as [site_i, its_neighbor_j, interaction_prefactors], 
@@ -80,33 +101,45 @@ class HeisenbergHamiltonian:
             site_spins (2D-array-like, see above for dimensions): 
             site_labels (2D-array-like, see above for dimensions): 
             site_multiplicity (2D-array-like, see above for dimensions): all neighbors should be considered equal if Hamiltonian is isotropic
+            site_index (2D-array-like, see above for dimensions): index of neighbor j of atom i (needed for three-body interactions to map j back as a new i.)
         """
         if verbose: print('type(site_spins):', type(site_spins))
         assert site_spins.shape[:2] == site_labels.shape == site_multiplicity.shape, f'The number of spins, labels and multiplicities must be the same, but they are {site_spins.shape[:2]}, {site_labels.shape}, and {site_multiplicity.shape}.'
 
         N_atoms_in_magnetic_unit_cell, N_neighbors = site_labels.shape
-        N_two_site_parameters = len(self.two_site_parameters)
-        N_single_site_parameters = len(self.single_site_parameters)
-
-        # ---- TWO-SITE INTERACTIONS ----
-        two_site_prefactors = np.zeros((N_atoms_in_magnetic_unit_cell, N_neighbors, N_two_site_parameters))
-        for i in range(N_atoms_in_magnetic_unit_cell):
-            for j in range(N_neighbors):
-                # the i-th atom (with spin = magnetic_moments[i]) interacts with its j-th neighbor (with spin = site_spins[i,j])
-                two_site_prefactors[i,j,:] = site_multiplicity[i,j] * np.array(self.two_site_energy(magnetic_moments[i], site_spins[i,j]))
 
         # ---- SINGLE-SITE INTERACTIONS ----
-        single_site_prefactors = np.zeros((N_atoms_in_magnetic_unit_cell, N_neighbors, N_single_site_parameters))
-        for i in range(N_atoms_in_magnetic_unit_cell):
-            for j in range(N_neighbors):
-                single_site_prefactors[i,j,:] = site_multiplicity[i,j] * np.array(self.single_site_energy(site_spins[i,j]))
+        if self.types_n_body[1] is not None:
+            N_single_site_parameters = len(self.single_site_parameters)
+            single_site_prefactors = np.zeros((N_atoms_in_magnetic_unit_cell, N_neighbors, N_single_site_parameters))
+            for i in range(N_atoms_in_magnetic_unit_cell):
+                for j in range(N_neighbors):
+                    single_site_prefactors[i,j,:] = site_multiplicity[i,j] * np.array(self.single_site_energy(site_spins[i,j]))
+            self.single_site_prefactors = single_site_prefactors
+            if verbose: print('single_site_prefactors.shape:', single_site_prefactors.shape)
 
-        self.two_site_prefactors = two_site_prefactors
-        self.single_site_prefactors = single_site_prefactors
+        # ---- TWO-SITE INTERACTIONS ----
+        if self.types_n_body[2] is not None:
+            N_two_site_parameters = len(self.two_site_parameters)
+            two_site_prefactors = np.zeros((N_atoms_in_magnetic_unit_cell, N_neighbors, N_two_site_parameters))
+            for i in range(N_atoms_in_magnetic_unit_cell):
+                for j in range(N_neighbors):
+                    # the i-th atom (with spin = magnetic_moments[i]) interacts with its j-th neighbor (with spin = site_spins[i,j])
+                    two_site_prefactors[i,j,:] = site_multiplicity[i,j] * np.array(self.two_site_energy(magnetic_moments[i], site_spins[i,j]))
+            self.two_site_prefactors = two_site_prefactors
+            if verbose: print('two_site_prefactors:', two_site_prefactors.shape)
 
-        if verbose: print('single_site_prefactors.shape:', single_site_prefactors.shape)
-        if verbose: print('two_site_prefactors:', two_site_prefactors.shape)
-        
+        # ---- THREE-SITE INTERACTIONS ----
+        if self.types_n_body[3] is not None:
+            N_three_site_parameters = len(self.three_site_parameters)
+            three_site_prefactors = np.zeros((N_atoms_in_magnetic_unit_cell, N_neighbors, N_neighbors, N_three_site_parameters))
+            for i in range(N_atoms_in_magnetic_unit_cell):
+                for j in range(N_neighbors):
+                    for k in range(N_neighbors):
+                        j_as_new_i = site_index[i,j]
+                        three_site_prefactors[i,j,k,:] = site_multiplicity[i,j] * site_multiplicity[j_as_new_i,k] * np.array(self.three_site_energy(magnetic_moments[i], site_spins[i,j], site_spins[j_as_new_i,k]))
+            self.three_site_prefactors = three_site_prefactors
+            if verbose: print('three_site_prefactors:', three_site_prefactors.shape)
 
         # DECIDE if the neighbor is in the magnetic unit cell or not
         # if in the supercell, the interaction would be calculated twice!!!
