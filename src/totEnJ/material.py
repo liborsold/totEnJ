@@ -41,7 +41,7 @@ class StructureJ(Structure):
         if magnetic_moments: self.magnetic_moments = magnetic_moments
         if neighbor_cutoff: self.neighbor_cutoff = neighbor_cutoff
         if round_decimals: self.round_decimals = round_decimals
-        if n_body: self.n_body = n_body
+        if types_n_body: self.types_n_body = types_n_body
         # symmetry analysis must be done before removing nonmagnetic atoms - they influence the symmetry in any case!!
         self.symmetry_analysis()
         if discard_nonmagnetic_atoms: self.remove_nonmagnetic_atoms()
@@ -152,21 +152,17 @@ class StructureJ(Structure):
             self.all_neighbors_mask[i,:N_neighbors] = True
 
         self.all_neighbors_coords = self.get_neighbors_coords()
-        for i in range(self.N_atoms_in_magnetic_unit_cell):
-            print('self.all_neighbors_coords[i]:', self.all_neighbors_coords[i])
-            print('self[i].coords', self[i].coords)
-            # exit()
+        # for i in range(self.N_atoms_in_magnetic_unit_cell):
+        #     print('self.all_neighbors_coords[i]:', self.all_neighbors_coords[i])
+        #     print('self[i].coords', self[i].coords)
+        #     # exit()
         # self.all_neighbors_rij = np.array([coords - self[i].coords for i in range(self.N_atoms_in_magnetic_unit_cell) for coords in self.all_neighbors_coords[i]])
         self.all_neighbors_rij = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff, 3), dtype=np.ndarray)
         for i in range(self.N_atoms_in_magnetic_unit_cell):
             for j, coords in enumerate(self.all_neighbors_coords[i]):
                 self.all_neighbors_rij[i,j] = coords - self[i].coords
 
-                
-        # print('self.all_neighbors_rij', self.all_neighbors_rij)
-        print('good')
         self.all_neighbors_distances = self.get_all_neighbors_distances()
-        print('still good')
         self.all_neighbors_NN = np.array([nn_order_from_distances(self.all_neighbors_distances[i,:], round_decimals=self.round_decimals) for i in range(self.N_atoms_in_magnetic_unit_cell)])
 
         if verbose:
@@ -227,17 +223,18 @@ class StructureJ(Structure):
             Exception: _description_
         """
 
-        if self.n_body == 2:
+        if self.types_n_body[2] is not None:
             # ==== PANDAS TABLE OF TWO-SITE INTERACTIONS ====
             self.two_site_interaction_table = pd.DataFrame()
-            data = [array2D.flatten() for array2D in [self.center_atom_index, self.center_atom_labels, self.all_neighbors_index, self.all_neighbors_labels, self.all_neighbors_images, self.all_neighbors_distances, self.all_neighbors_NN, self.all_neighbors_cluster_index]]
-            column_names = ['i_atom_index', 'i_atom_label', 'j_atom_index', 'j_atom_label', 'j_image', 'ij_distance', 'ij_NN_order', 'ij_cluster_index']
+            data = [array2D.flatten() for array2D in [self.center_atom_index, self.all_neighbors_index, self.center_atom_labels, self.all_neighbors_labels, self.all_neighbors_images, self.all_neighbors_distances, self.all_neighbors_NN, self.all_neighbors_cluster_index]]
+            column_names = ['i_atom_index', 'j_atom_index', 'i_atom_label', 'j_atom_label', 'j_image', 'ij_distance', 'ij_NN_order', 'ij_cluster_index']
             for i, name in enumerate(column_names):
                 self.two_site_interaction_table[name] = data[i]
                 
             all_neighbors_rij_list = [self.all_neighbors_rij[i][j] for i in range(len(self.all_neighbors_rij)) for j in range(len(self.all_neighbors_rij[i]))]
             self.two_site_interaction_table['r_ij'] = all_neighbors_rij_list
-        elif self.n_body == 3:
+        
+        if self.types_n_body[3] is not None:
             self.three_site_interaction_table = pd.DataFrame()
             i_atom_indeces = []
             j_atom_indeces = []
@@ -315,24 +312,25 @@ class StructureJ(Structure):
             self.three_site_interaction_table['jk_NN_order'] = jk_NN_orders
             self.three_site_interaction_table['ij_cluster_index'] = ij_cluster_index
             self.three_site_interaction_table['jk_cluster_index'] = jk_cluster_index
-        else:
-            raise Exception("Only n_body=2 and n_body=3 are implemented.")
 
     def do_pandas_magic(self, verbose=True):
 
         self.construct_interaction_table()
 
         if verbose:
-            if self.n_body == 2:
+            if self.types_n_body[2] is not None:
                 print('Two-site interaction table:\n', self.two_site_interaction_table)
-            elif self.n_body == 3:
+            
+            elif self.types_n_body[3] is not None:
                 print('Three-site interaction table:\n', self.three_site_interaction_table)
+            
             print('------------ data:', self.center_atom_labels[0,0])
 
         self.get_total_energy_prefactors_for_pandas_table()
 
         self.aggregate_pandas_table()
 
+        # self.merge_n_body_aggregate_tables()
 
 
     # !!!!! DO NOT USE THE BELOW - IF YOU FORGET TO ORDER SOME ARRAYS THERE WILL BE HARD-TO-FIND BUGS !!!!!
@@ -363,8 +361,7 @@ class StructureJ(Structure):
         typ_example = getattr(self.all_neighbors_for_all_sites[0][0][0], attribute)
         typ = type(typ_example)
         if typ == np.ndarray:
-            typ_example.fill(-999   )
-        print('typ', typ)
+            typ_example.fill(-999)
         if typ == str:
             typ = 'U8'
         data = np.zeros((self.N_atoms_in_magnetic_unit_cell, self.N_neighbors_up_to_cutoff), dtype=typ)
@@ -374,8 +371,7 @@ class StructureJ(Structure):
                                                     mask=self.all_neighbors_mask)
         for i, row in enumerate(self.all_neighbors_for_all_sites):
             for j, obj in enumerate(row):
-                array_of_attributes[i,j] = getattr(obj, attribute)
-        print('array_of_attributes', array_of_attributes[0,:-6])
+                array_of_attributes[i,j] = getattr(obj, attribute)  
         return array_of_attributes
     
     def get_center_atom_attribute(self, attribute):
@@ -658,6 +654,7 @@ class StructureJ(Structure):
 
         prefactors_summed = []
         for i in range(1, max(orders)+1):
+            # !!!! here replace 'orders' by 'cluster index?'
             prefactors_summed.append(np.sum(prefactors[orders == i]))
         
         # prepend total energy of the unit cell times number of unit cells in the supercell
@@ -670,6 +667,15 @@ class StructureJ(Structure):
         if verbose: print('two_site_parameters', self.HH.two_site_parameters)
         
         self.prefactors_summed = prefactors_summed
+
+        # SAME FOR THREE-SITE INTERACTIONS
+        prefactors = self.HH.three_site_prefactors[:,:,0]
+
+        # order based on what? total distance?
+
+
+
+
         # print('two_site_prefactors:', self.HH.two_site_prefactors)
 
         # create an array of label pairs
@@ -919,11 +925,11 @@ class StructureJ(Structure):
     def get_total_energy_prefactors_for_pandas_table(self, verbose=False):
         # loop over all sites
 
-        if self.n_body == 2:
+        if self.types_n_body[2] is not None:
             N_two_site_parameters = len(self.HH.two_site_parameters)
             N_pairs = len(self.two_site_interaction_table)
 
-            parameter_prefactors = np.zeros((N_pairs, N_two_site_parameters), dtype=np.float64)
+            two_site_parameter_prefactors = np.zeros((N_pairs, N_two_site_parameters), dtype=np.float64)
 
             for i,row in self.two_site_interaction_table.iterrows():
                 if verbose:    
@@ -931,16 +937,16 @@ class StructureJ(Structure):
                     print("row['i_atom_index']", row['i_atom_index'])
                     print("type(row['i_atom_index'])", type(row['i_atom_index']))
                 # get the two-site parameters for all pairs
-                parameter_prefactors[i,:] = self.HH.two_site_energy(self.magnetic_moments[row['i_atom_index']], self.magnetic_moments[row['j_atom_index']])
+                two_site_parameter_prefactors[i,:] = self.HH.two_site_energy(self.magnetic_moments[row['i_atom_index']], self.magnetic_moments[row['j_atom_index']])
 
             for i, parameter in enumerate(self.HH.two_site_parameters):
-                self.two_site_interaction_table[parameter] = parameter_prefactors[:,i]
+                self.two_site_interaction_table[parameter] = two_site_parameter_prefactors[:,i]
         
-        elif self.n_body == 3:
+        if self.types_n_body[3] is not None:
             N_three_site_parameters = len(self.HH.three_site_parameters)
             N_triplets = len(self.three_site_interaction_table)
 
-            parameter_prefactors = np.zeros((N_triplets, N_three_site_parameters), dtype=np.float64)
+            three_site_parameter_prefactors = np.zeros((N_triplets, N_three_site_parameters), dtype=np.float64)
 
             for i,row in self.three_site_interaction_table.iterrows():
                 if verbose:    
@@ -950,26 +956,36 @@ class StructureJ(Structure):
                     print("row['k_atom_index']", row['k_atom_index'])
                     print("type(row['i_atom_index'])", type(row['i_atom_index']))
                 # get the two-site parameters for all pairs
-                parameter_prefactors[i,:] = self.HH.three_site_energy(self.magnetic_moments[row['i_atom_index']], self.magnetic_moments[row['j_atom_index']], self.magnetic_moments[row['k_atom_index']])
+                three_site_parameter_prefactors[i,:] = self.HH.three_site_energy(self.magnetic_moments[row['i_atom_index']], self.magnetic_moments[row['j_atom_index']], self.magnetic_moments[row['k_atom_index']])
 
             for i, parameter in enumerate(self.HH.three_site_parameters):
-                self.three_site_interaction_table[parameter] = parameter_prefactors[:,i]
+                self.three_site_interaction_table[parameter] = three_site_parameter_prefactors[:,i]
 
-    def aggregate_pandas_table(self, verbose=False):
+    def aggregate_pandas_table(self, verbose=True):
         # group by 'i_atom_index', secondarily by 'j_atom_index' and tertiary by 'ij_cluster_index'
         # then sum all J and D
 
-        if self.n_body == 2:
-            table_grouped = self.two_site_interaction_table.groupby(['i_atom_label', 'j_atom_label', 'ij_cluster_index'])
+        if self.types_n_body[2] is not None:
+            two_site_table_grouped = self.two_site_interaction_table.groupby(['i_atom_label', 'j_atom_label', 'ij_cluster_index'])
             # SUM only J and D
-            table_grouped = table_grouped.agg({'ij_distance': 'first', 'J': 'sum', 'D': 'sum'})
-        elif self.n_body == 3:
-            table_grouped = self.three_site_interaction_table.groupby(['i_atom_label', 'j_atom_label', 'k_atom_label', 'ij_cluster_index', 'jk_cluster_index'])
+            two_site_table_grouped = two_site_table_grouped.agg({'ij_distance': 'first', 'J': 'sum', 'D': 'sum'})
+            self.two_site_table_grouped = two_site_table_grouped
+            if verbose:
+                print('TWO-SITE TABLE GROUPED')
+                print(two_site_table_grouped)
+        
+        elif self.types_n_body[3] is not None:
+            three_site_table_grouped = self.three_site_interaction_table.groupby(['i_atom_label', 'j_atom_label', 'k_atom_label', 'ij_cluster_index', 'jk_cluster_index'])
             # SUM only J
-            table_grouped = table_grouped.agg({'ij_distance': 'first', 'jk_distance': 'first', 'ijk_distance': 'first', 'J': 'sum'})
+            three_site_table_grouped = three_site_table_grouped.agg({'ij_distance': 'first', 'jk_distance': 'first', 'ijk_distance': 'first', 'J': 'sum'})
+            self.three_site_table_grouped = three_site_table_grouped
+            if verbose:
+                print('THREE-SITE TABLE GROUPED')
+                print(three_site_table_grouped)
 
-        self.table_grouped = table_grouped
+    def merge_n_body_aggregate_tables(self):
+        """Merge the two-body and three-body tables.
+        """
+        if self.types_n_body[2] is not None and self.types_n_body[3] is not None:
+            self.merged_table = self.two_site_table_grouped
 
-        if verbose:
-            print('TABLE SUMMED')
-            print(table_grouped)
